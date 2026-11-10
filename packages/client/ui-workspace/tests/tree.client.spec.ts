@@ -885,3 +885,25 @@ it('leaves unnamed history titles empty for locale-owned row labels', () => {
   const sessions = list(item)
   expect(deriveFlat(sessions, [item.id], noRows, noAttention)[0]?.title).toBe('')
 })
+
+
+describe('multi-root performance smoke', () => {
+  it('derives 20 roots and 100 Sessions within the browser budget', () => {
+    const roots = Array.from({ length: 20 }, (_, index) => `/perf/root-${index}`)
+    const sessions = Array.from({ length: 100 }, (_, index) =>
+      summary(`perf-${index}`, 1_000 + index, roots[index % roots.length]))
+    const multi: WorkspaceView = {
+      ...workspace('perf', sessions.map(session => session.id as string), 'Perf'),
+      path: roots[0]!,
+      paths: roots,
+    }
+    const started = performance.now()
+    const groups = deriveGroups(list(...sessions), [multi], noRows, noAttention, view(['perf']))
+    const elapsed = performance.now() - started
+
+    expect(groups[0]?.paths).toEqual(roots)
+    expect(groups[0]?.sessions).toHaveLength(100)
+    expect(elapsed).toBeLessThan(500)
+    console.log(`perf: deriveGroups 20 roots / 100 sessions = ${elapsed.toFixed(1)}ms`)
+  })
+})

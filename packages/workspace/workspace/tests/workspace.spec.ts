@@ -1624,6 +1624,18 @@ describe('Workspace multi-root paths', () => {
     expect(workspace.paths).toEqual([third, first])
   })
 
+  it('resolves every root of a 20-root Workspace within the lookup budget', async () => {
+    const roots = await Promise.all(Array.from({ length: 20 }, (_, index) => makeDir(`mr-perf-${index}`)))
+    const { registry } = await harness()
+    const workspace = await registry.create(roots)
+    const started = performance.now()
+    for (const root of roots) expect(await registry.resolveByPath(root)).toBe(workspace)
+    const elapsed = performance.now() - started
+
+    expect(elapsed).toBeLessThan(500)
+    console.log(`perf: resolveByPath 20 roots = ${elapsed.toFixed(1)}ms`)
+  })
+
   it('reads a pre-multi-root record as exactly [path]', async () => {
     const directory = await makeDir('mr-legacy')
     const id = WorkspaceId('00000000-0000-4000-8000-000000000030')
