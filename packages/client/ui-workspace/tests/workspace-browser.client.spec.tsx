@@ -1335,6 +1335,24 @@ describe('WorkspaceBrowser', () => {
     })
   })
 
+  it('adds a root from a pasted absolute path', async () => {
+    const multi = { ...workspace('alpha', []), paths: ['/w/a'] }
+    const addPath = vi.fn(async () => multi)
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([multi])),
+      addPath,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '工作区“alpha”的操作' }))
+    fireEvent.click(screen.getByText('管理根目录…'))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.change(dialog.getByLabelText('粘贴绝对路径'), { target: { value: '/w/manual' } })
+    fireEvent.click(dialog.getByText('添加'))
+    await waitFor(() => {
+      expect(addPath).toHaveBeenCalledWith(wid('alpha'), '/w/manual')
+    })
+  })
+
   it('creates a multi-root workspace from the creation dialog', async () => {
     const created = { ...workspace('group', []), paths: ['/w/a', '/w/b'] }
     const createWorkspace = vi.fn(async () => created)
@@ -1353,6 +1371,27 @@ describe('WorkspaceBrowser', () => {
     await waitFor(() => { expect(dialog.getByText('a')).toBeTruthy() })
     fireEvent.click(dialog.getByText('添加根目录…'))
     await waitFor(() => { expect(dialog.getByText('b')).toBeTruthy() })
+    fireEvent.click(dialog.getByText('创建多根工作区'))
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledWith({ paths: ['/w/a', '/w/b'] })
+    })
+  })
+
+  it('creates a multi-root workspace from pasted absolute paths', async () => {
+    const created = { ...workspace('group', []), paths: ['/w/a', '/w/b'] }
+    const createWorkspace = vi.fn(async () => created)
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([])),
+      createWorkspace,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '新建多根工作区' }))
+    const dialog = within(screen.getByRole('dialog'))
+    const input = dialog.getByLabelText('粘贴绝对路径')
+    fireEvent.change(input, { target: { value: '/w/a' } })
+    fireEvent.click(dialog.getByText('添加'))
+    fireEvent.change(input, { target: { value: '/w/b' } })
+    fireEvent.click(dialog.getByText('添加'))
     fireEvent.click(dialog.getByText('创建多根工作区'))
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalledWith({ paths: ['/w/a', '/w/b'] })

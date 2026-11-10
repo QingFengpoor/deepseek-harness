@@ -578,6 +578,18 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+.manualPathRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.pathInput {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+}
+
 .deleteAction:not(:disabled) {
   color: var(--dsw-alias-state-error-primary);
 }

@@ -1202,11 +1202,13 @@ export function WorkspaceBrowser({
   const [createOpen, setCreateOpen] = useState(false)
   const [createRoots, setCreateRoots] = useState<readonly string[]>([])
   const [createTitle, setCreateTitle] = useState('')
+  const [createPathDraft, setCreatePathDraft] = useState('')
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const openCreate = () => {
     setCreateRoots([])
     setCreateTitle('')
+    setCreatePathDraft('')
     setCreateError(null)
     setCreateOpen(true)
   }
@@ -1232,9 +1234,23 @@ export function WorkspaceBrowser({
       setCreateBusy(false)
     }
   }
+  const addCreatePath = (raw: string): void => {
+    const path = raw.trim()
+    if (path === '') return
+    if (createRoots.includes(path)) {
+      setCreateError(t('roots.duplicate'))
+      return
+    }
+    setCreateRoots(previous => [...previous, path])
+    setCreatePathDraft('')
+    setCreateError(null)
+  }
   const submitCreate = async (): Promise<void> => {
     if (createBusy) return
-    if (createRoots.length === 0) {
+    const roots = [...createRoots]
+    const draft = createPathDraft.trim()
+    if (draft !== '' && !roots.includes(draft)) roots.push(draft)
+    if (roots.length === 0) {
       setCreateError(t('workspace.createGroup.empty'))
       return
     }
@@ -1243,7 +1259,7 @@ export function WorkspaceBrowser({
     try {
       const title = createTitle.trim()
       const workspace = await createWorkspace({
-        paths: createRoots,
+        paths: roots,
         ...(title === '' ? {} : { title }),
       })
       setCreateOpen(false)
@@ -1263,12 +1279,14 @@ export function WorkspaceBrowser({
     : workspaces.find(workspace => workspace.workspaceId === rootsTargetId)
   const [rootsBusy, setRootsBusy] = useState<string | null>(null)
   const [rootsError, setRootsError] = useState<string | null>(null)
+  const [rootPathDraft, setRootPathDraft] = useState('')
   const [rootRemoveTarget, setRootRemoveTarget] = useState<string | null>(null)
   const closeRoots = () => {
     if (rootsBusy !== null) return
     setRootsTargetId(null)
     setRootsError(null)
     setRootRemoveTarget(null)
+    setRootPathDraft('')
   }
   const addRoot = async (): Promise<void> => {
     if (rootsTarget === undefined || rootsBusy !== null) return
@@ -1278,6 +1296,26 @@ export function WorkspaceBrowser({
     try {
       const path = await pickDirectory()
       if (path !== null) await addPath(workspaceId, path)
+    } catch (reason: unknown) {
+      setRootsError(t('roots.addFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+    } finally {
+      setRootsBusy(null)
+    }
+  }
+  const addRootPath = async (): Promise<void> => {
+    if (rootsTarget === undefined || rootsBusy !== null) return
+    const path = rootPathDraft.trim()
+    if (path === '') return
+    if (rootsTarget.paths.includes(path)) {
+      setRootsError(t('roots.duplicate'))
+      return
+    }
+    const workspaceId = rootsTarget.workspaceId
+    setRootsBusy('manual')
+    setRootsError(null)
+    try {
+      await addPath(workspaceId, path)
+      setRootPathDraft('')
     } catch (reason: unknown) {
       setRootsError(t('roots.addFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
     } finally {
@@ -1670,6 +1708,28 @@ export function WorkspaceBrowser({
               </div>
             </div>
           ))}
+          <div className={css.manualPathRow}>
+            <input
+              className={clsx(css.renameInput, css.pathInput)}
+              value={createPathDraft}
+              aria-label={t('roots.pathPlaceholder')}
+              placeholder={t('roots.pathPlaceholder')}
+              disabled={createBusy}
+              onChange={(e) => { setCreatePathDraft(e.target.value); setCreateError(null) }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                addCreatePath(createPathDraft)
+              }}
+            />
+            <Button
+              variant="outline"
+              disabled={createBusy || createPathDraft.trim() === ''}
+              onClick={() => { addCreatePath(createPathDraft) }}
+            >
+              {t('roots.addManual')}
+            </Button>
+          </div>
           <Button variant="outline" disabled={createBusy} onClick={() => { void addCreateRoot() }}>
             {createBusy ? t('roots.adding') : t('roots.add')}
           </Button>
@@ -1742,6 +1802,28 @@ export function WorkspaceBrowser({
                 )}
               </div>
             ))}
+            <div className={css.manualPathRow}>
+              <input
+                className={clsx(css.renameInput, css.pathInput)}
+                value={rootPathDraft}
+                aria-label={t('roots.pathPlaceholder')}
+                placeholder={t('roots.pathPlaceholder')}
+                disabled={rootsBusy !== null}
+                onChange={(e) => { setRootPathDraft(e.target.value); setRootsError(null) }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  void addRootPath()
+                }}
+              />
+              <Button
+                variant="outline"
+                disabled={rootsBusy !== null || rootPathDraft.trim() === ''}
+                onClick={() => { void addRootPath() }}
+              >
+                {t('roots.addManual')}
+              </Button>
+            </div>
             <Button variant="outline" disabled={rootsBusy !== null} onClick={() => { void addRoot() }}>
               {rootsBusy === 'add' ? t('roots.adding') : t('roots.add')}
             </Button>
