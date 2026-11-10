@@ -444,6 +444,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const reconcile = (): void => {
       if (this.lifetime.signal.aborted) return
       if (this.clearArchivedCurrent()) return
+      if (this.clearUnknownCurrent()) return
       if (initial !== 'waiting') return
       const workspace = this.workspaces.list.getSnapshot()
       const sessions = this.sessions.list.getSnapshot()
@@ -512,6 +513,19 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       if (!signal.aborted) this.notify({ kind: 'defaultWorkspaceFailed' })
       return undefined
     }
+  }
+
+  /**
+   * Drop a selection whose Session binding disappeared (for example a blank
+   * Session detached when its root is removed), so the conversation surface
+   * never resolves a stale session id.
+   * @returns true when an unknown current selection was cleared.
+   */
+  private clearUnknownCurrent(): boolean {
+    const current = this.mainReference?.sessionId
+    if (current === undefined || this.sessions.binding(current) !== undefined) return false
+    this.clearMain()
+    return true
   }
 
   /** @returns true when an archived current selection was cleared. */

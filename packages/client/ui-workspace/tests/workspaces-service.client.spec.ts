@@ -371,6 +371,19 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.create).not.toHaveBeenCalled()
   })
 
+  it('clears a current Session whose Controller binding disappeared', async () => {
+    const b = bench({ workspaces: workspaceState(), sessions: sessionState([summary('gone')]) })
+    await setImmediate()
+    b.uiWorkspace.openSession(sid('gone'))
+    const retained = b.sessions.retained.find(item => item.reference.sessionId === sid('gone'))
+    expect(retained).toBeDefined()
+    const clearedBefore = b.selectPanel.mock.calls.filter(([panel]) => panel === null).length
+    retained!.release()
+    b.sessions.list.set(sessionState([summary('gone')]))
+    await setImmediate()
+    expect(b.selectPanel.mock.calls.filter(([panel]) => panel === null).length).toBeGreaterThan(clearedBefore)
+  })
+
   it('publishes a startup directory failure once without creating a Session', async () => {
     const b = bench({ workspaces: workspaceState(), sessions: sessionState(), configureWorkspaces: (workspaces) => {
       workspaces.initializeDefault.mockRejectedValueOnce(new Error('denied'))
