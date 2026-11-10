@@ -2655,6 +2655,13 @@ describe('Workspace tree grouping', () => {
     expect(within(section('Projects')).getByText('Child')).toBeTruthy()
   })
 
+  it('nests by the primary root while exposing extra roots', () => {
+    const multiChild = { ...child, paths: [child.path, '/projects/team/backend'] }
+    mount({ useWorkspaces: hook(workspaceState([multiChild, root])) })
+    expect(within(section('Projects')).getByText('Child')).toBeTruthy()
+    expect(within(section('Projects')).getByLabelText('2 个根目录').textContent).toBe('2')
+  })
+
   it('restores collapsed ancestors and keeps the flat view independent', () => {
     const b = mount({ useWorkspaces: hook(workspaceState([root, team, child])) })
     fireEvent.click(screen.getByText('Projects'))
