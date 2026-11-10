@@ -64,7 +64,7 @@ export interface WorkspaceFollowSink {
  */
 function normalizedView(view: WorkspaceView): WorkspaceView {
   const paths = (view as { paths?: readonly string[] }).paths
-  return paths === undefined ? { ...view, paths: [view.path] } : view
+  return paths === undefined || paths.length === 0 ? { ...view, paths: [view.path] } : view
 }
 
 /**

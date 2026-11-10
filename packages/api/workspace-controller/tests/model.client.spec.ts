@@ -246,6 +246,10 @@ describe('ClientWorkspaceModel', () => {
     model.upsertView(increment)
     expect(model.getSnapshot().items.find(item => item.workspaceId === wid('increment'))?.paths)
       .toEqual(['/w/increment'])
+
+    model.upsertView({ ...workspace('empty'), paths: [] })
+    expect(model.getSnapshot().items.find(item => item.workspaceId === wid('empty'))?.paths)
+      .toEqual(['/w/empty'])
   })
 
   it('keeps the last baseline during retry and exposes a terminal stream failure', () => {
