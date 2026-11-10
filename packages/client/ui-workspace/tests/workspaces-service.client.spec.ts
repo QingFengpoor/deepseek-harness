@@ -213,6 +213,18 @@ class FakeWorkspaces implements IWorkspaces {
     this.list = new MutableSource(initial)
   }
 
+  addPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    return Promise.resolve({ workspaceId, title: '', path, paths: [path], sessionIds: [] } as WorkspaceView)
+  }
+
+  removePath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    return Promise.resolve({ workspaceId, title: '', path, paths: [path], sessionIds: [] } as WorkspaceView)
+  }
+
+  setPrimaryPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    return Promise.resolve({ workspaceId, title: '', path, paths: [path], sessionIds: [] } as WorkspaceView)
+  }
+
   archiveSession(sessionId: SessionId): Promise<void> {
     this.archiveCalls.push(sessionId)
     return this.onArchive(sessionId)
