@@ -1634,6 +1634,20 @@ describe('Workspace multi-root paths', () => {
     expect(registry.get(id)!.paths).toEqual([directory])
   })
 
+  it('writes path and paths back when a legacy record is renamed', async () => {
+    const directory = await makeDir('mr-legacy-rename')
+    const id = WorkspaceId('00000000-0000-4000-8000-000000000032')
+    const pool = storedPool([[id, record(directory, [])]], { initialized: true, workspaceIds: [id] })
+    const { registry, pool: writePool } = await harness({ pool })
+    const workspace = registry.get(id)!
+    await workspace.setTitle('Renamed legacy')
+
+    const stored = storedRecord(writePool, id)
+    expect(stored.path).toBe(directory)
+    expect(stored.paths).toEqual([directory])
+    expect(stored.title).toBe('Renamed legacy')
+  })
+
   it('bootstraps sessions from every stored root', async () => {
     const first = await makeDir('mr-bootstrap-first')
     const second = await makeDir('mr-bootstrap-second')

@@ -288,7 +288,12 @@ export class WorkspaceEntity implements Workspace {
         if (changed === current && sessionIds.length === current.sessionIds.length) {
           throw unchangedSentinel
         }
-        return { ...changed, sessionIds, updatedAt: new Date().toISOString() }
+        return {
+          ...changed,
+          paths: storedWorkspacePaths(changed),
+          sessionIds,
+          updatedAt: new Date().toISOString(),
+        }
       })
     } catch (error) {
       if (error === unchangedSentinel) return

@@ -57,6 +57,17 @@ export interface WorkspaceFollowSink {
 }
 
 /**
+ * Backfill `paths` for legacy Host/client snapshots that predate multi-root.
+ * The primary `path` is the only root such a snapshot can describe.
+ * @param view - Host or legacy view.
+ * @returns a view whose `paths` is always populated.
+ */
+function normalizedView(view: WorkspaceView): WorkspaceView {
+  const paths = (view as { paths?: readonly string[] }).paths
+  return paths === undefined ? { ...view, paths: [view.path] } : view
+}
+
+/**
  * Owns the Client Workspace projection, mutation echoes, and stream/unary race resolution.
  */
 export class ClientWorkspaceModel implements WorkspaceFollowSink {
@@ -418,18 +429,19 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   }
 
   private upsert(view: WorkspaceView): void {
-    if (this.removedIds.has(view.workspaceId)) return
-    const index = this.items.findIndex(item => item.workspaceId === view.workspaceId)
+    const normalized = normalizedView(view)
+    if (this.removedIds.has(normalized.workspaceId)) return
+    const index = this.items.findIndex(item => item.workspaceId === normalized.workspaceId)
     const installed = this.items[index]
     // Unary responses and stream increments race on separate requests. Keep
     // the newest Host projection regardless of their arrival order.
-    if (installed !== undefined && Date.parse(view.updatedAt) < Date.parse(installed.updatedAt)) return
-    if (!this.committedOrder.includes(view.workspaceId)) {
-      this.committedOrder = [view.workspaceId, ...this.committedOrder]
+    if (installed !== undefined && Date.parse(normalized.updatedAt) < Date.parse(installed.updatedAt)) return
+    if (!this.committedOrder.includes(normalized.workspaceId)) {
+      this.committedOrder = [normalized.workspaceId, ...this.committedOrder]
     }
     this.items = index === -1
-      ? [view, ...this.items]
-      : this.items.map((item, position) => position === index ? view : item)
+      ? [normalized, ...this.items]
+      : this.items.map((item, position) => position === index ? normalized : item)
     this.invalidate()
   }
 
@@ -450,7 +462,8 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   private installViews(views: readonly WorkspaceView[]): void {
     const installed = new Map<WorkspaceId, WorkspaceView>()
     for (const view of views) {
-      if (!this.removedIds.has(view.workspaceId)) installed.set(view.workspaceId, view)
+      const normalized = normalizedView(view)
+      if (!this.removedIds.has(normalized.workspaceId)) installed.set(normalized.workspaceId, normalized)
     }
     this.items = [...installed.values()]
     this.committedOrder = views.map(view => view.workspaceId)

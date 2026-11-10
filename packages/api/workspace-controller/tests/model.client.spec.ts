@@ -234,6 +234,20 @@ describe('ClientWorkspaceModel', () => {
     expect(model.getSnapshot().archivedSessionIds).toEqual([])
   })
 
+  it('backfills paths from legacy baseline and increment snapshots', () => {
+    const model = modelFor()
+    const legacy = { ...workspace('legacy') }
+    delete (legacy as { paths?: readonly string[] }).paths
+    baseline(model, [legacy])
+    expect(model.getSnapshot().items[0]!.paths).toEqual(['/w/legacy'])
+
+    const increment = { ...workspace('increment') }
+    delete (increment as { paths?: readonly string[] }).paths
+    model.upsertView(increment)
+    expect(model.getSnapshot().items.find(item => item.workspaceId === wid('increment'))?.paths)
+      .toEqual(['/w/increment'])
+  })
+
   it('keeps the last baseline during retry and exposes a terminal stream failure', () => {
     const model = modelFor()
     baseline(model, [workspace('visible')])
