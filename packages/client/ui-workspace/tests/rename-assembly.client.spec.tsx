@@ -76,7 +76,7 @@ async function declareFrame(runtime: SlotTestRuntime): Promise<void> {
 async function seedWorkspace(runtime: SlotTestRuntime): Promise<void> {
   await runtime.workspaces.update((draft) => {
     draft.items = [{
-      workspaceId: 'w1' as WorkspaceId, title: 'alpha', path: '/w/alpha',
+      workspaceId: 'w1' as WorkspaceId, title: 'alpha', path: '/w/alpha', paths: ['/w/alpha'],
       sessionIds: [SID], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
     }] as never
   })

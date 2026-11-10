@@ -18,11 +18,15 @@ const sessionId = z.string().transform(value => brandString<SessionId>(value))
 
 /**
  * Durable shape of one workspace record. `path` is the `fs.realpath` canon
- * stamped at create; `sessionIds` is the ordered ownership account (array
- * order is display order); timestamps are ISO-8601 strings.
+ * stamped at create and remains the primary root/compatibility field; `paths`
+ * carries every root (primary first) on records written by a multi-root build
+ * and is absent on records written before it. `sessionIds` is the ordered
+ * ownership account (array order is display order); timestamps are ISO-8601
+ * strings.
  */
 export const workspaceRecord = z.object({
   path: z.string(),
+  paths: z.array(z.string()).optional(),
   title: z.string(),
   sessionIds: z.array(sessionId),
   createdAt: z.string(),

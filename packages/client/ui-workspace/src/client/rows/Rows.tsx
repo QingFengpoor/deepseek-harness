@@ -25,6 +25,7 @@ import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { abbreviateHomePath } from '@deepseek-ai/dsh-util-workspace-path'
 import type { MenuOpenState, WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
+import { workspaceLabel } from '../tree.ts'
 import css from './Rows.module.css'
 
 /** The standard locale seat, prop-passed from the browser root. */
@@ -221,9 +222,9 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
   newShortcut?: ShortcutCatalogEntry | undefined
   containsCurrentDescendant?: boolean
   onToggle: () => void
-  onCreate: () => void
+  onCreate: (rootPath?: string) => void
   /** Real-Workspace actions; absent for the ungrouped bucket (no menu shown). */
-  actions?: { rename: () => void; delete: () => void } | undefined
+  actions?: { rename: () => void; delete: () => void; manageRoots?: () => void } | undefined
   /** Present only for real Workspace rows in the grouped view. */
   drag?: WorkspaceRowDragProps | undefined
   /** Host account home; POSIX home-rooted hover paths display as `~`. */
@@ -235,7 +236,24 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
   const label = row.workspaceId === undefined ? t('group.ungrouped') : row.label
   const active = containsCurrentDescendant || (group.expanded && group.containsCurrent)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [rootMenuOpen, setRootMenuOpen] = useState(false)
+  const paths = row.paths
+  const rootItems = useMemo(() => {
+    const labels = paths.map(path => workspaceLabel(path))
+    const counts = new Map<string, number>()
+    for (const rootLabel of labels) counts.set(rootLabel, (counts.get(rootLabel) ?? 0) + 1)
+    return paths.map((path, index) => {
+      const rootLabel = labels[index] as string
+      return {
+        id: path,
+        label: (counts.get(rootLabel) ?? 0) > 1 ? `${rootLabel} — ${path}` : rootLabel,
+      }
+    })
+  }, [paths])
   const workspaceMenuItems = [
+    ...(actions?.manageRoots === undefined ? [] : [
+      { id: 'manage-roots', label: t('roots.manage'), icon: <IconFolderOpenRegular /> },
+    ]),
     { id: 'rename', label: t('rename'), icon: <IconEditOutlineRegular /> },
     { id: 'delete', label: t('delete.workspace'), icon: <IconTrashOutlineRegular />, danger: true },
   ]
@@ -263,7 +281,18 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
         <IconTriangleRightFillRegular className={clsx(css.arrow, row.expanded && css.arrowOpen)} />
       </span>
       <span className={css.projectText}>
-        <span className={css.title}>{label}</span>
+        <span className={css.projectTitleRow}>
+          <span className={css.title}>{label}</span>
+          {paths.length > 1 && (
+            <span
+              className={css.rootCount}
+              title={paths.join('\n')}
+              aria-label={t('roots.count', { n: paths.length })}
+            >
+              {paths.length}
+            </span>
+          )}
+        </span>
       </span>
       <span className={css.rowActions}>
         {actions !== undefined && (
@@ -275,9 +304,10 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
               setMenuOpen(false)
               // Unknown ids leave before the dispatch: a future menu row must
               // not inherit the destructive branch as an else fallback.
-              /* v8 ignore next -- Menu can emit only the rename and delete rows supplied above. */
-              if (id !== 'rename' && id !== 'delete') return
-              if (id === 'rename') actions.rename()
+              /* v8 ignore next -- Menu can emit only the rows supplied above. */
+              if (id !== 'manage-roots' && id !== 'rename' && id !== 'delete') return
+              if (id === 'manage-roots') actions.manageRoots?.()
+              else if (id === 'rename') actions.rename()
               else actions.delete()
             }}
             portal
@@ -294,17 +324,48 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
             )}
           />
         )}
-        <Tooltip label={t('actions.newSession')} shortcutKeys={newShortcut?.keys} side="bottom" align="end" delayMs={500} portal>
-          <button
-            type="button"
-            className={css.iconButton}
-            aria-keyshortcuts={newShortcut?.aria}
-            aria-label={t('actions.newSession.aria', { name: label })}
-            onClick={(e) => { e.stopPropagation(); onCreate() }}
-          >
-            <IconNewChatOutlineRegular />
-          </button>
-        </Tooltip>
+        {paths.length > 1
+          ? (
+            <Menu
+              open={rootMenuOpen}
+              onClose={() => { setRootMenuOpen(false) }}
+              items={rootItems}
+              onSelect={(path) => {
+                setRootMenuOpen(false)
+                onCreate(path)
+              }}
+              portal
+              closeOnPointerLeave
+              anchor={(
+                <Tooltip label={t('actions.newSession')} shortcutKeys={newShortcut?.keys} side="bottom" align="end" delayMs={500} portal>
+                  <button
+                    type="button"
+                    className={css.iconButton}
+                    aria-keyshortcuts={newShortcut?.aria}
+                    aria-label={t('actions.newSession.aria', { name: label })}
+                    aria-haspopup="menu"
+                    aria-expanded={rootMenuOpen}
+                    onClick={(e) => { e.stopPropagation(); setRootMenuOpen(v => !v) }}
+                  >
+                    <IconNewChatOutlineRegular />
+                  </button>
+                </Tooltip>
+              )}
+            />
+          )
+          : (
+            <Tooltip label={t('actions.newSession')} shortcutKeys={newShortcut?.keys} side="bottom" align="end" delayMs={500} portal>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-keyshortcuts={newShortcut?.aria}
+                aria-label={t('actions.newSession.aria', { name: label })}
+                onClick={(e) => { e.stopPropagation(); onCreate() }}
+              >
+                <IconNewChatOutlineRegular />
+              </button>
+            </Tooltip>
+          )}
       </span>
     </div>
   )
@@ -321,7 +382,7 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
       />}
       openDelayMs={800}
       grouped
-      disabled={menuOpen}
+      disabled={menuOpen || rootMenuOpen}
       copyText={row.cwd}
       copyLabel={t('copy')}
       copiedLabel={t('hover.copied')}

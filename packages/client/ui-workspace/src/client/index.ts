@@ -272,11 +272,15 @@ export function apply(ctx: Context): void {
     notifyArchivedNotOpenable: () => { notify({ kind: 'archivedNotOpenable' }) },
     renameWorkspace: async (workspaceId, title) => { await workspaces.rename(workspaceId, title) },
     deleteWorkspace: async (workspaceId) => { await workspaces.delete(workspaceId) },
+    addPath: async (workspaceId, path) => workspaces.addPath(workspaceId, path),
+    removePath: async (workspaceId, path) => workspaces.removePath(workspaceId, path),
+    setPrimaryPath: async (workspaceId, path) => workspaces.setPrimaryPath(workspaceId, path),
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
     unarchiveSession: async (sessionId) => { await uiWorkspace.unarchiveSession(sessionId) },
     createWorkspace: input => workspaces.create(input),
+    pickDirectory: () => uiWorkspace.pickDirectory(),
     requestSearch: shortcutControls.search,
     requestAddWorkspace: shortcutControls.add,
     closeAddWorkspace: shortcutControls.closeAdd,

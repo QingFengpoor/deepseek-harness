@@ -13,7 +13,7 @@ import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceRecord } from './spec.ts'
 import type { Workspace, WorkspaceId } from './types.ts'
-import { realpathNormalize } from './paths.ts'
+import { realpathNormalize, storedWorkspacePaths } from './paths.ts'
 
 /** An insertSessionBefore request named a session or anchor not on the account (storage failures stay plain errors). */
 export class WorkspaceMoveInvalidError extends Error {
@@ -23,6 +23,29 @@ export class WorkspaceMoveInvalidError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'WorkspaceMoveInvalidError'
+  }
+}
+
+/** A root mutation named a canonical path the workspace does not own. */
+export class WorkspacePathNotOwnedError extends Error {
+  /**
+   * @param path - The canonical root the caller named.
+   * @param workspaceId - The workspace that was asked to mutate.
+   */
+  constructor(readonly path: string, readonly workspaceId: WorkspaceId) {
+    super(`workspace '${workspaceId}' does not own root '${path}'`)
+    this.name = 'WorkspacePathNotOwnedError'
+  }
+}
+
+/** A root removal would leave the workspace with no roots at all. */
+export class WorkspaceLastPathError extends Error {
+  /**
+   * @param workspaceId - The workspace whose last root was named for removal.
+   */
+  constructor(readonly workspaceId: WorkspaceId) {
+    super(`cannot remove the last root of workspace '${workspaceId}'; delete the workspace instead`)
+    this.name = 'WorkspaceLastPathError'
   }
 }
 
@@ -42,10 +65,10 @@ export interface WorkspaceEntityHost {
    * Validate an already-accounted session, preserving ownership when its fully
    * qualified cwd cannot resolve because a path component is missing.
    * @param id - Session already present in this workspace's candidate account.
-   * @param path - Workspace's stored canonical directory.
+   * @param paths - The workspace's stored canonical roots.
    * @returns whether the candidate remains a member.
    */
-  candidateMatches(id: SessionId, path: string): boolean
+  candidateMatches(id: SessionId, paths: readonly string[]): boolean
 
   /**
    * Read one stored session header for attach validation.
@@ -87,6 +110,10 @@ export class WorkspaceEntity implements Workspace {
     return this.record.path
   }
 
+  get paths(): readonly string[] {
+    return storedWorkspacePaths(this.record)
+  }
+
   get title(): string {
     return this.record.title
   }
@@ -100,7 +127,7 @@ export class WorkspaceEntity implements Workspace {
   }
 
   get sessionIds(): readonly SessionId[] {
-    return this.record.sessionIds.filter(id => this.host.candidateMatches(id, this.record.path))
+    return this.record.sessionIds.filter(id => this.host.candidateMatches(id, this.paths))
   }
 
   async setTitle(title: string): Promise<void> {
@@ -136,10 +163,10 @@ export class WorkspaceEntity implements Workspace {
           + `its cwd '${header.cwd}' is not a directory`,
         )
       }
-      if (cwd !== this.record.path) {
+      if (!this.paths.includes(cwd)) {
         throw new Error(
           `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + `its cwd resolves to '${cwd}'`,
+          + `its cwd resolves to '${cwd}', which is not one of this workspace's roots`,
         )
       }
       this.host.rememberSessionPath(sessionId, cwd)
@@ -178,14 +205,64 @@ export class WorkspaceEntity implements Workspace {
       : record)
   }
 
+  /**
+   * Append one canonical root. The registry owns global ownership checks before
+   * calling this; the write itself only rejects a duplicate already on the
+   * record (idempotent no-op) and leaves the primary root untouched.
+   * @param path - Canonical existing directory not already owned by this workspace.
+   * @returns resolution after durability.
+   */
+  async addPath(path: string): Promise<void> {
+    await this.mutate((record) => {
+      const paths = storedWorkspacePaths(record)
+      return paths.includes(path) ? record : { ...record, paths: [...paths, path] }
+    })
+  }
+
+  /**
+   * Remove one root. The last root cannot be removed; removing the primary root
+   * promotes the next root in order. Sessions whose cwd was the removed root no
+   * longer match membership, so the same durable write prunes their account
+   * slots (their logs are untouched).
+   * @param path - Canonical root currently owned by this workspace.
+   * @returns resolution after durability.
+   */
+  async removePath(path: string): Promise<void> {
+    await this.mutate((record) => {
+      const paths = storedWorkspacePaths(record)
+      if (!paths.includes(path)) throw new WorkspacePathNotOwnedError(path, this.id)
+      if (paths.length === 1) throw new WorkspaceLastPathError(this.id)
+      const next = paths.filter(candidate => candidate !== path)
+      return { ...record, path: next[0] as string, paths: next }
+    })
+  }
+
+  /**
+   * Promote one owned root to primary by moving it to the front. `path` is the
+   * compatibility field, so it always follows `paths[0]`.
+   * @param path - Canonical root currently owned by this workspace.
+   * @returns resolution after durability.
+   */
+  async setPrimaryPath(path: string): Promise<void> {
+    await this.mutate((record) => {
+      const paths = storedWorkspacePaths(record)
+      if (!paths.includes(path)) throw new WorkspacePathNotOwnedError(path, this.id)
+      if (record.path === path) return record
+      return { ...record, path, paths: [path, ...paths.filter(candidate => candidate !== path)] }
+    })
+  }
+
   async status(): Promise<'ok' | 'missing-dir'> {
-    try {
-      return (await stat(this.record.path)).isDirectory() ? 'ok' : 'missing-dir'
-    } catch {
-      // Any stat failure (ENOENT, dangling parent, permission loss) means the
-      // directory is not usable right now; the record itself never mutates.
-      return 'missing-dir'
+    for (const path of this.paths) {
+      try {
+        if (!(await stat(path)).isDirectory()) return 'missing-dir'
+      } catch {
+        // Any stat failure (ENOENT, dangling parent, permission loss) means the
+        // directory is not usable right now; the record itself never mutates.
+        return 'missing-dir'
+      }
     }
+    return 'ok'
   }
 
   /**
@@ -206,7 +283,7 @@ export class WorkspaceEntity implements Workspace {
       next = await this.host.table().update(this.id, (current) => {
         const changed = fn(current)
         const sessionIds = changed.sessionIds.filter(
-          id => this.host.candidateMatches(id, changed.path),
+          id => this.host.candidateMatches(id, storedWorkspacePaths(changed)),
         )
         if (changed === current && sessionIds.length === current.sessionIds.length) {
           throw unchangedSentinel

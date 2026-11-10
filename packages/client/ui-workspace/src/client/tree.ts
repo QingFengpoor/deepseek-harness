@@ -71,6 +71,8 @@ export interface GroupNode {
   /** Backing Workspace id; absent only for the ungrouped bucket. */
   workspaceId: WorkspaceId | undefined
   cwd: string | undefined
+  /** Every canonical root of the backing Workspace; empty for the ungrouped bucket. */
+  paths: readonly string[]
   /** Workspace creation time (epoch ms); absent only for the ungrouped bucket. */
   createdAt: number | undefined
   label: string
@@ -117,6 +119,7 @@ interface Group {
   key: string
   workspaceId: WorkspaceId | undefined
   cwd: string | undefined
+  paths: readonly string[]
   createdAt: number | undefined
   label: string
   sessions: SessionSummary[]
@@ -301,11 +304,12 @@ function buildGroup(
   key: string,
   workspaceId: WorkspaceId | undefined,
   cwd: string | undefined,
+  paths: readonly string[],
   createdAt: number | undefined,
   label: string,
   members: readonly SessionSummary[],
 ): Group {
-  return { key, workspaceId, cwd, createdAt, label, sessions: [...members] }
+  return { key, workspaceId, cwd, paths, createdAt, label, sessions: [...members] }
 }
 
 /** Apply a stored Ungrouped order and append newly loose Sessions by recency. */
@@ -354,7 +358,7 @@ function groupByWorkspace(
     // a Workspace without archived Sessions contributes no group.
     if (archivedFilter === 'only' && members.length === 0) continue
     groups.push(buildGroup(
-      workspace.workspaceId, workspace.workspaceId, workspace.path,
+      workspace.workspaceId, workspace.workspaceId, workspace.path, workspace.paths,
       Date.parse(workspace.createdAt), workspace.title, members,
     ))
   }
@@ -367,6 +371,7 @@ function groupByWorkspace(
       UNGROUPED_KEY,
       undefined,
       undefined,
+      [],
       undefined,
       '',
       orderedUngrouped(stray, ungroupedOrder, list.byId),
@@ -454,6 +459,7 @@ export function deriveGroups(
       key: g.key,
       workspaceId: g.workspaceId,
       cwd: g.cwd,
+      paths: g.paths,
       createdAt: g.createdAt,
       label: g.label,
       sessionCount: g.sessions.length,

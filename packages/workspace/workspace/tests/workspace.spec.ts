@@ -14,7 +14,11 @@ import { SessionPersistenceRevision } from '@deepseek-ai/dsh-session-persistence
 import type { SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import WorkspaceRegistry, {
+  WorkspaceDuplicatePathError,
   WorkspaceId,
+  WorkspaceLastPathError,
+  WorkspacePathConflictError,
+  WorkspacePathNotOwnedError,
   type workspaceDomainState,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
@@ -1534,6 +1538,125 @@ describe('first-use Workspace preparation', () => {
     expect(storedState(pool).defaultWorkspaceId).toBeUndefined()
     await expect(realpath(join(h.directoryRoot, 'nested', 'Workspace'))).resolves.toBe(join(h.directoryRoot, 'nested', 'Workspace'))
     expect(await h.registry.initializeDefault(h.resolveDirectory)).toBeDefined()
+  })
+})
+
+describe('Workspace multi-root paths', () => {
+  it('creates a workspace over multiple canonical roots and resolves every root', async () => {
+    const first = await makeDir('mr-create-first')
+    const second = await makeDir('mr-create-second')
+    const { registry, pool } = await harness()
+    const workspace = await registry.create([first, second], 'Group')
+
+    expect(workspace.path).toBe(first)
+    expect(workspace.paths).toEqual([first, second])
+    expect(storedRecord(pool, workspace.id).paths).toEqual([first, second])
+    expect(await registry.resolveByPath(first)).toBe(workspace)
+    expect(await registry.resolveByPath(second)).toBe(workspace)
+    expect(await registry.create([first, second])).toBe(workspace)
+    await expect(registry.create([])).rejects.toThrow(/at least one/)
+  })
+
+  it('deduplicates canonical roots and keeps first-seen primary order', async () => {
+    const first = await makeDir('mr-dup-first')
+    const second = await makeDir('mr-dup-second')
+    const alias = join(base, 'mr-dup-alias')
+    await symlink(first, alias)
+    const { registry } = await harness()
+    const workspace = await registry.create([second, alias, second])
+
+    expect(workspace.path).toBe(second)
+    expect(workspace.paths).toEqual([second, first])
+  })
+
+  it('rejects roots owned by another workspace and partial overlaps', async () => {
+    const first = await makeDir('mr-conflict-first')
+    const second = await makeDir('mr-conflict-second')
+    const third = await makeDir('mr-conflict-third')
+    const { registry } = await harness()
+    await registry.create(first)
+    await registry.create([second, third])
+
+    await expect(registry.create([first, second])).rejects.toBeInstanceOf(WorkspacePathConflictError)
+    await expect(registry.create([first, await makeDir('mr-conflict-fourth')]))
+      .rejects.toBeInstanceOf(WorkspacePathConflictError)
+  })
+
+  it('attaches sessions in any root, detaches on root removal, and promotes the next primary', async () => {
+    const first = await makeDir('mr-attach-first')
+    const second = await makeDir('mr-attach-second')
+    const elsewhere = await makeDir('mr-attach-elsewhere')
+    const h = await harness()
+    const workspace = await h.registry.create([first, second])
+    h.setSessions([header('in-first', first), header('in-second', second), header('elsewhere', elsewhere)])
+    await workspace.attachSession(SessionId('in-first'))
+    await workspace.attachSession(SessionId('in-second'))
+    expect(workspace.sessionIds).toEqual(['in-second', 'in-first'])
+    await expect(workspace.attachSession(SessionId('elsewhere'))).rejects.toThrow(/not one of this workspace's roots/)
+
+    await h.registry.removePath(workspace.id, first)
+    expect(workspace.path).toBe(second)
+    expect(workspace.paths).toEqual([second])
+    expect(workspace.sessionIds).toEqual(['in-second'])
+    expect(storedRecord(h.pool, workspace.id).sessionIds).toEqual(['in-second'])
+    await expect(h.registry.removePath(workspace.id, second)).rejects.toBeInstanceOf(WorkspaceLastPathError)
+  })
+
+  it('adds, promotes, and rejects duplicate or unowned roots', async () => {
+    const first = await makeDir('mr-manage-first')
+    const second = await makeDir('mr-manage-second')
+    const third = await makeDir('mr-manage-third')
+    const { registry } = await harness()
+    const workspace = await registry.create(first)
+
+    await registry.addPath(workspace.id, second)
+    expect(workspace.paths).toEqual([first, second])
+    await expect(registry.addPath(workspace.id, second)).rejects.toBeInstanceOf(WorkspaceDuplicatePathError)
+    await registry.addPath(workspace.id, third)
+    expect(workspace.paths).toEqual([first, second, third])
+
+    await registry.removePath(workspace.id, second)
+    expect(workspace.paths).toEqual([first, third])
+    await expect(registry.removePath(workspace.id, second)).rejects.toBeInstanceOf(WorkspacePathNotOwnedError)
+
+    await registry.setPrimaryPath(workspace.id, third)
+    expect(workspace.path).toBe(third)
+    expect(workspace.paths).toEqual([third, first])
+  })
+
+  it('reads a pre-multi-root record as exactly [path]', async () => {
+    const directory = await makeDir('mr-legacy')
+    const id = WorkspaceId('00000000-0000-4000-8000-000000000030')
+    const pool = storedPool([[id, record(directory, [])]], { initialized: true, workspaceIds: [id] })
+    const { registry } = await harness({ pool })
+
+    expect(registry.get(id)!.path).toBe(directory)
+    expect(registry.get(id)!.paths).toEqual([directory])
+  })
+
+  it('bootstraps sessions from every stored root', async () => {
+    const first = await makeDir('mr-bootstrap-first')
+    const second = await makeDir('mr-bootstrap-second')
+    const id = WorkspaceId('00000000-0000-4000-8000-000000000031')
+    const stored = { ...record(first, []), paths: [first, second] }
+    const pool = storedPool([[id, stored]], { initialized: false, workspaceIds: [] })
+    const h = await harness({
+      pool,
+      sessions: [header('session-first', first, 10), header('session-second', second, 20)],
+    })
+
+    expect(h.registry.get(id)!.paths).toEqual([first, second])
+    expect(h.registry.get(id)!.sessionIds).toEqual(['session-first', 'session-second'])
+  })
+
+  it('reports missing when any root disappears', async () => {
+    const first = await makeDir('mr-status-first')
+    const second = await makeDir('mr-status-second')
+    const { registry } = await harness()
+    const workspace = await registry.create([first, second])
+    expect(await workspace.status()).toBe('ok')
+    await rm(second, { recursive: true, force: true })
+    expect(await workspace.status()).toBe('missing-dir')
   })
 })
 

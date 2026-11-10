@@ -87,6 +87,7 @@ export interface ISessions {
    */
   create(opts?: {
     workspaceId?: WorkspaceId
+    rootPath?: string
     cwd?: string
     sessionId?: SessionId
     agentPreset?: string

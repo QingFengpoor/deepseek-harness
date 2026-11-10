@@ -56,6 +56,7 @@ function workspace(
   return {
     workspaceId: wid(id),
     path: `/w/${id}`,
+    paths: [`/w/${id}`],
     title: id,
     sessionIds,
     createdAt,
@@ -680,6 +681,31 @@ describe('UiWorkspaceService', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([sid('new'), sid('new')])
     await expect(b.uiWorkspace.connectWorkspace(wid('missing'))).rejects.toThrow('unknown workspace')
     expect(b.sessions.retain).not.toHaveBeenCalled()
+  })
+
+  it('starts a new Session in the selected root and reuses only that root blank', async () => {
+    const multi = { ...workspace('a', [sid('root-a-blank'), sid('root-b-blank')]), paths: ['/w/a', '/w/a-two'] }
+    const b = bench({
+      sessions: sessionState([
+        summary('root-a-blank', { blank: true, cwd: '/w/a' }),
+        summary('root-b-blank', { blank: true, cwd: '/w/a-two' }),
+      ], 'pending'),
+      workspaces: workspaceState([multi]),
+    })
+    await expect(b.uiWorkspace.connectWorkspace(wid('a'), { rootPath: '/w/a-two' }))
+      .resolves.toBe(sid('root-b-blank'))
+    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: wid('a'), rootPath: '/w/a-two', sessionId: sid('root-b-blank'),
+    })
+
+    b.sessions.create.mockClear()
+    b.sessions.retain.mockClear()
+    b.uiWorkspace.startSession(wid('a'), { rootPath: '/w/a-two' })
+    await vi.waitFor(() => {
+      expect(b.sessions.create).toHaveBeenCalledWith({
+        workspaceId: wid('a'), rootPath: '/w/a-two', sessionId: sid('root-b-blank'),
+      })
+    })
   })
 
   it('returns New Session to the Workspace blank that holds its unsent draft', async () => {

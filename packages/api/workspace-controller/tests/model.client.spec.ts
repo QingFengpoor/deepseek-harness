@@ -3,6 +3,7 @@ import {
   ClientWorkspaceModel, type WorkspaceRemote,
 } from '../src/client/index.ts'
 import type {
+  WorkspaceAddPathRequest,
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
   WorkspaceCreateRequest,
@@ -15,7 +16,9 @@ import type {
   WorkspaceOrderValue,
   WorkspacePinSessionRequest,
   WorkspacePinValue,
+  WorkspaceRemovePathRequest,
   WorkspaceRenameRequest,
+  WorkspaceSetPrimaryPathRequest,
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
@@ -37,6 +40,7 @@ function workspace(
   return {
     workspaceId: wid(id),
     path: `/w/${id}`,
+    paths: [`/w/${id}`],
     title: id,
     sessionIds,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -71,10 +75,18 @@ function deferred<T>(): Deferred<T> {
 class FakeWorkspaceRemote implements WorkspaceRemote {
   readonly initializeDefault = vi.fn<WorkspaceRemote['initializeDefault']>(async () => remoteOk({ workspace: workspace('default') }))
   readonly calls: Array<{ readonly method: string; readonly request: unknown }> = []
-  onCreate: (request: WorkspaceCreateRequest) => Promise<RemoteResult<WorkspaceCreateValue>> = request =>
-    Promise.resolve(remoteOk({ workspace: workspace(request.path.split('/').pop() ?? 'workspace'), created: true }))
+  onCreate: (request: WorkspaceCreateRequest) => Promise<RemoteResult<WorkspaceCreateValue>> = (request) => {
+    const paths = request.paths ?? (request.path === undefined ? [] : [request.path])
+    return Promise.resolve(remoteOk({ workspace: workspace(paths[0]?.split('/').pop() ?? 'workspace'), created: true }))
+  }
   onRename: (request: WorkspaceRenameRequest) => Promise<RemoteResult<WorkspaceValue>> = request =>
     Promise.resolve(remoteOk({ workspace: { ...workspace(String(request.workspaceId)), title: request.title } }))
+  onAddPath: (request: WorkspaceAddPathRequest) => Promise<RemoteResult<WorkspaceValue>> = request =>
+    Promise.resolve(remoteOk({ workspace: { ...workspace(String(request.workspaceId)), paths: [request.path] } }))
+  onRemovePath: (request: WorkspaceRemovePathRequest) => Promise<RemoteResult<WorkspaceValue>> = request =>
+    Promise.resolve(remoteOk({ workspace: { ...workspace(String(request.workspaceId)), paths: [request.path] } }))
+  onSetPrimaryPath: (request: WorkspaceSetPrimaryPathRequest) => Promise<RemoteResult<WorkspaceValue>> = request =>
+    Promise.resolve(remoteOk({ workspace: { ...workspace(String(request.workspaceId)), paths: [request.path] } }))
   onDelete: (_request: WorkspaceDeleteRequest) => Promise<RemoteResult<WorkspaceDeleteValue>> = () =>
     Promise.resolve(remoteOk({ deleted: true }))
   onInsertBefore: (
@@ -111,6 +123,21 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
   rename(request: WorkspaceRenameRequest): Promise<RemoteResult<WorkspaceValue>> {
     this.record('rename', request)
     return this.onRename(request)
+  }
+
+  addPath(request: WorkspaceAddPathRequest): Promise<RemoteResult<WorkspaceValue>> {
+    this.record('addPath', request)
+    return this.onAddPath(request)
+  }
+
+  removePath(request: WorkspaceRemovePathRequest): Promise<RemoteResult<WorkspaceValue>> {
+    this.record('removePath', request)
+    return this.onRemovePath(request)
+  }
+
+  setPrimaryPath(request: WorkspaceSetPrimaryPathRequest): Promise<RemoteResult<WorkspaceValue>> {
+    this.record('setPrimaryPath', request)
+    return this.onSetPrimaryPath(request)
   }
 
   delete(request: WorkspaceDeleteRequest): Promise<RemoteResult<WorkspaceDeleteValue>> {

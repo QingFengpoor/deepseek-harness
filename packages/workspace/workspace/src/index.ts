@@ -14,8 +14,12 @@ import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { WorkspaceEntity } from './entity.ts'
 import type { WorkspaceEntityHost } from './entity.ts'
 
-export { WorkspaceMoveInvalidError } from './entity.ts'
-import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath, realpathNormalize } from './paths.ts'
+export {
+  WorkspaceLastPathError, WorkspaceMoveInvalidError, WorkspacePathNotOwnedError,
+} from './entity.ts'
+import {
+  defaultWorkspaceTitle, fullyQualifiedWorkspacePath, realpathNormalize, storedWorkspacePaths,
+} from './paths.ts'
 import { workspaceDomainSpec } from './spec.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
 import type { SessionActivity, Workspace, WorkspaceId as WorkspaceIdBrand } from './types.ts'
@@ -25,7 +29,8 @@ export type {
 } from './types.ts'
 export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
 export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
-export { realpathNormalize } from './paths.ts'
+export { realpathNormalize, storedWorkspacePaths } from './paths.ts'
+export type { WorkspacePathRecord } from './paths.ts'
 
 /** Identifies one workspace record (see `src/types.ts` for the brand rationale). */
 export type WorkspaceId = WorkspaceIdBrand
@@ -90,6 +95,29 @@ export class WorkspaceOrderInvalidError extends Error {
   constructor(readonly workspaceId: WorkspaceId) {
     super(`cannot reorder unknown workspace '${workspaceId}'`)
     this.name = 'WorkspaceOrderInvalidError'
+  }
+}
+
+/** A root belongs to a different Workspace; one canonical path has one owner. */
+export class WorkspacePathConflictError extends Error {
+  /**
+   * @param path - The canonical root already owned elsewhere.
+   * @param workspaceId - The Workspace that currently owns it.
+   */
+  constructor(readonly path: string, readonly workspaceId: WorkspaceId) {
+    super(`root '${path}' already belongs to workspace '${workspaceId}'`)
+    this.name = 'WorkspacePathConflictError'
+  }
+}
+
+/** A root addition named a path the target Workspace already owns. */
+export class WorkspaceDuplicatePathError extends Error {
+  /**
+   * @param path - The canonical root already on the workspace.
+   */
+  constructor(readonly path: string) {
+    super(`root '${path}' is already registered on this workspace`)
+    this.name = 'WorkspaceDuplicatePathError'
   }
 }
 
@@ -161,6 +189,29 @@ const compareHeaders = (left: SessionHeader, right: SessionHeader): number =>
   right.createdAt - left.createdAt || String(left.id).localeCompare(String(right.id))
 
 /**
+ * Canonicalize and de-duplicate an input root set. Every path must be fully
+ * qualified, resolve through `fs.realpath`, and be an existing directory; the
+ * first-seen order becomes the primary-first order.
+ * @param paths - requested root spellings.
+ * @returns canonical roots, at least one.
+ */
+async function canonicalizeWorkspaceDirectories(paths: readonly string[]): Promise<string[]> {
+  if (paths.length === 0) throw new TypeError('a workspace requires at least one root path')
+  const canonical: string[] = []
+  const seen = new Set<string>()
+  for (const path of paths) {
+    const resolved = await realpathNormalize(path)
+    if (!(await stat(resolved)).isDirectory()) {
+      throw new Error(`cannot use '${path}' as a workspace root: path is not a directory`)
+    }
+    if (seen.has(resolved)) continue
+    seen.add(resolved)
+    canonical.push(resolved)
+  }
+  return canonical
+}
+
+/**
  * Durable workspace registry. Startup waits for `sessionPersistence`, builds
  * one canonical-cwd header index, and completes the one-time history
  * bootstrap before the service becomes active. The persistence dependency is
@@ -182,7 +233,10 @@ export class WorkspaceRegistry extends Service {
 
   private readonly host: WorkspaceEntityHost = {
     table: () => this.requireTable(),
-    candidateMatches: (id, path) => this.sessionPaths.get(id) === path || this.missingSessionPaths.has(id),
+    candidateMatches: (id, paths) => {
+      const path = this.sessionPaths.get(id)
+      return (path !== undefined && paths.includes(path)) || this.missingSessionPaths.has(id)
+    },
     readSessionHeader: id => this.readSessionHeader(id),
     rememberSessionPath: (id, path) => {
       this.sessionPaths.set(id, path)
@@ -220,26 +274,24 @@ export class WorkspaceRegistry extends Service {
   }
 
   /**
-   * Create or reuse a workspace for an existing directory. The fully qualified
-   * path is canonicalized through `fs.realpath`; a relative, nonexistent, or
-   * non-directory path rejects. Repeated calls for the same canonical path
-   * return the existing entity without changing its title.
-   * A newly created workspace is prepended to the durable registry order.
-   * Different canonical paths may share a display title.
-   * @param path - Existing directory to own, in a fully qualified path spelling.
-   * @param title - Display title used only when a new record is created.
+   * Create or reuse a workspace over one or more existing directories. Every
+   * fully qualified path is canonicalized through `fs.realpath`; relative,
+   * nonexistent, or non-directory paths reject. Duplicate canonical paths
+   * collapse; the first input becomes the primary root.
+   *
+   * Repeated calls for the same root set return the existing entity without
+   * changing its title. A root already owned by a different Workspace rejects
+   * with {@link WorkspacePathConflictError}; a partial overlap with one
+   * Workspace also rejects rather than silently merging. A newly created
+   * workspace is prepended to the durable registry order. Different canonical
+   * paths may share a display title.
+   * @param path - existing directory, or a non-empty list of them, in fully qualified spellings.
+   * @param title - display title used only when a new record is created.
    * @returns the existing or newly durable workspace.
    */
-  // TODO: `title` lost its last production caller when the gateway's
-  // create-by-name branch was deleted
-  // (.agents/notes/archived/simplification/2026-07-31-one-route-to-add-a-workspace.md);
-  // drop the parameter with its @param clause and the `create(path, title?)`
-  // lines in this package's README pair.
-  async create(path: string, title?: string): Promise<Workspace> {
-    const canonical = await realpathNormalize(path)
-    if (!(await stat(canonical)).isDirectory()) {
-      throw new Error(`cannot create a workspace at '${canonical}': path is not a directory`)
-    }
+  async create(path: string | readonly string[], title?: string): Promise<Workspace> {
+    const requested = typeof path === 'string' ? [path] : [...path]
+    const canonical = await canonicalizeWorkspaceDirectories(requested)
     return await this.enqueueOperation(() => this.createCanonical(canonical, title))
   }
 
@@ -270,7 +322,7 @@ export class WorkspaceRegistry extends Service {
       const canonical = await realpathNormalize(path)
       // A Session can start outside the registry queue while directory preparation awaits I/O.
       if ((await this.listStoredHeaders()).length > 0 || sessions.list().length > 0) return undefined
-      return this.createCanonical(canonical, defaultWorkspaceTitle(path), true)
+      return this.createCanonical([canonical], defaultWorkspaceTitle(path), true)
     })
   }
 
@@ -333,6 +385,88 @@ export class WorkspaceRegistry extends Service {
       await this.setState({ ...state, workspaceIds })
       return workspaceIds
     })
+  }
+
+  /**
+   * Append one existing directory as another root of a Workspace. The path is
+   * canonicalized like `create`; a root on the same Workspace is a duplicate,
+   * and a root owned by another Workspace is a conflict.
+   * @param id - target Workspace.
+   * @param path - existing directory in a fully qualified spelling.
+   * @returns the updated Workspace.
+   */
+  addPath(id: WorkspaceId, path: string): Promise<Workspace> {
+    return this.enqueueOperation(async () => {
+      const entity = this.requireEntity(id)
+      const canonical = await realpathNormalize(path)
+      if (!(await stat(canonical)).isDirectory()) {
+        throw new Error(`cannot add '${path}' as a workspace root: path is not a directory`)
+      }
+      if (entity.paths.includes(canonical)) throw new WorkspaceDuplicatePathError(canonical)
+      const owner = this.findPathOwner(canonical)
+      if (owner !== undefined) throw new WorkspacePathConflictError(canonical, owner)
+      await entity.addPath(canonical)
+      return entity
+    })
+  }
+
+  /**
+   * Remove one root from a Workspace. The last root is refused; removing the
+   * primary promotes the next root. Sessions whose cwd was that root are
+   * detached from the account in the same durable write (their logs remain).
+   * @param id - target Workspace.
+   * @param path - owned root, canonical or an existing alias of it.
+   * @returns the updated Workspace.
+   */
+  removePath(id: WorkspaceId, path: string): Promise<Workspace> {
+    return this.enqueueOperation(async () => {
+      const entity = this.requireEntity(id)
+      await entity.removePath(await this.canonicalOwnedPath(entity, path))
+      return entity
+    })
+  }
+
+  /**
+   * Promote one owned root to primary by moving it first; `path` follows.
+   * @param id - target Workspace.
+   * @param path - owned root, canonical or an existing alias of it.
+   * @returns the updated Workspace.
+   */
+  setPrimaryPath(id: WorkspaceId, path: string): Promise<Workspace> {
+    return this.enqueueOperation(async () => {
+      const entity = this.requireEntity(id)
+      await entity.setPrimaryPath(await this.canonicalOwnedPath(entity, path))
+      return entity
+    })
+  }
+
+  private requireEntity(id: WorkspaceId): WorkspaceEntity {
+    const entity = this.entities.get(id)
+    if (entity === undefined) throw new Error(`workspace '${id}' not found`)
+    return entity
+  }
+
+  private findPathOwner(path: string): WorkspaceId | undefined {
+    for (const [id, record] of this.requireTable().entries()) {
+      if (storedWorkspacePaths(record).includes(path)) return id
+    }
+    return undefined
+  }
+
+  /**
+   * Resolve a mutation path to the canonical spelling the entity stores. An
+   * existing alias resolves through realpath; an already-missing directory is
+   * compared by its recorded spelling so removal can still clean it up.
+   */
+  private async canonicalOwnedPath(entity: Workspace, path: string): Promise<string> {
+    if (entity.paths.includes(path)) return path
+    try {
+      const canonical = await realpathNormalize(path)
+      if (entity.paths.includes(canonical)) return canonical
+    } catch {
+      // Missing/unqualified paths fall through to the entity's ownership error.
+    }
+    return path
   }
 
   /**
@@ -502,23 +636,49 @@ export class WorkspaceRegistry extends Service {
   async resolveByPath(path: string): Promise<Workspace | undefined> {
     const canonical = await realpathNormalize(path)
     for (const entity of this.entities.values()) {
-      if (entity.path === canonical) return entity
+      if (entity.paths.includes(canonical)) return entity
     }
     return undefined
   }
 
-  private async createCanonical(canonical: string, title?: string, firstUse = false): Promise<WorkspaceEntity> {
+  private async createCanonical(canonicalPaths: readonly string[], title?: string, firstUse = false): Promise<WorkspaceEntity> {
+    const owners = new Set<WorkspaceId>()
     for (const entity of this.entities.values()) {
-      if (entity.path === canonical) return entity
+      if (canonicalPaths.some(path => entity.paths.includes(path))) owners.add(entity.id)
+    }
+    if (owners.size > 1) {
+      let conflictPath = canonicalPaths[0] as string
+      let conflictOwner = [...owners][0] as WorkspaceId
+      outer: for (const ownerId of owners) {
+        const owner = this.entities.get(ownerId)
+        for (const candidate of canonicalPaths) {
+          if (owner?.paths.includes(candidate)) {
+            conflictPath = candidate
+            conflictOwner = ownerId
+            break outer
+          }
+        }
+      }
+      throw new WorkspacePathConflictError(conflictPath, conflictOwner)
+    }
+    if (owners.size === 1) {
+      const existing = this.entities.get([...owners][0] as WorkspaceId) as WorkspaceEntity
+      const sameSet = existing.paths.length === canonicalPaths.length
+        && canonicalPaths.every(path => existing.paths.includes(path))
+      if (sameSet) return existing
+      const path = canonicalPaths.find(candidate => existing.paths.includes(candidate)) as string
+      throw new WorkspacePathConflictError(path, existing.id)
     }
 
-    const workspaceName = title ?? defaultWorkspaceTitle(canonical)
+    const primary = canonicalPaths[0] as string
+    const workspaceName = title ?? defaultWorkspaceTitle(primary)
     const table = this.requireTable()
     const state = this.requireState()
     const id = WorkspaceId(randomUUID())
     const now = new Date().toISOString()
     const record: WorkspaceRecord = {
-      path: canonical,
+      path: primary,
+      paths: [...canonicalPaths],
       title: workspaceName,
       sessionIds: [],
       createdAt: now,
@@ -668,7 +828,7 @@ export class WorkspaceRegistry extends Service {
     const byPath = new Map<string, WorkspaceId>()
     const accounted = new Map<SessionId, WorkspaceId>()
     for (const [id, record] of table.entries()) {
-      byPath.set(record.path, id)
+      for (const path of storedWorkspacePaths(record)) byPath.set(path, id)
       for (const sessionId of record.sessionIds) accounted.set(sessionId, id)
     }
 
@@ -683,6 +843,7 @@ export class WorkspaceRegistry extends Service {
         const createdAt = new Date(group.newestAt).toISOString()
         const record: WorkspaceRecord = {
           path: group.path,
+          paths: [group.path],
           title: defaultWorkspaceTitle(group.path),
           sessionIds,
           createdAt,
@@ -712,12 +873,17 @@ export class WorkspaceRegistry extends Service {
       for (const sessionId of historical) accounted.set(sessionId, id)
     }
 
-    const groupRank = new Map(groups.map(group => [group.path, group.newestAt]))
+    const groupRank = new Map<WorkspaceId, number>()
+    for (const group of groups) {
+      const id = byPath.get(group.path)
+      if (id === undefined) continue
+      groupRank.set(id, Math.max(groupRank.get(id) ?? 0, group.newestAt))
+    }
     const priorRank = new Map(state.workspaceIds.map((id, index) => [id, index]))
     const workspaceIds = [...table.entries()]
       .sort(([leftId, left], [rightId, right]) => {
-        const leftTime = groupRank.get(left.path) ?? Date.parse(left.createdAt)
-        const rightTime = groupRank.get(right.path) ?? Date.parse(right.createdAt)
+        const leftTime = groupRank.get(leftId) ?? Date.parse(left.createdAt)
+        const rightTime = groupRank.get(rightId) ?? Date.parse(right.createdAt)
         return rightTime - leftTime
           || (priorRank.get(leftId) ?? Number.MAX_SAFE_INTEGER)
             - (priorRank.get(rightId) ?? Number.MAX_SAFE_INTEGER)
@@ -763,14 +929,16 @@ export class WorkspaceRegistry extends Service {
     const paths = new Map<string, WorkspaceId>()
     const accounted = new Map<SessionId, WorkspaceId>()
     for (const [id, record] of table.entries()) {
-      const pathHolder = paths.get(record.path)
-      if (pathHolder !== undefined) {
-        throw new Error(
-          `workspace domain is inconsistent: path '${record.path}' is claimed `
-          + `by both workspace '${pathHolder}' and workspace '${id}'`,
-        )
+      for (const path of storedWorkspacePaths(record)) {
+        const pathHolder = paths.get(path)
+        if (pathHolder !== undefined) {
+          throw new Error(
+            `workspace domain is inconsistent: path '${path}' is claimed `
+            + `by both workspace '${pathHolder}' and workspace '${id}'`,
+          )
+        }
+        paths.set(path, id)
       }
-      paths.set(record.path, id)
       for (const sessionId of record.sessionIds) {
         const holder = accounted.get(sessionId)
         if (holder !== undefined) {
@@ -844,12 +1012,13 @@ export class WorkspaceRegistry extends Service {
   private reportFilteredCandidates(): void {
     for (const entity of this.entities.values()) {
       const record = this.requireTable().get(entity.id) as WorkspaceRecord
+      const paths = storedWorkspacePaths(record)
       for (const sessionId of record.sessionIds) {
-        if (this.host.candidateMatches(sessionId, record.path)) continue
+        if (this.host.candidateMatches(sessionId, paths)) continue
         const path = this.sessionPaths.get(sessionId)
         const reason = this.invalidSessionPaths.get(sessionId)
           ?? (this.headers.has(sessionId)
-            ? `canonical cwd '${path}' differs from workspace path '${record.path}'`
+            ? `canonical cwd '${path}' is not one of workspace roots (${paths.join(', ')})`
             : 'session header is missing')
         this.ctx.logger.warn(
           `workspace '${entity.id}' filtered session '${sessionId}' from membership: ${reason}`,

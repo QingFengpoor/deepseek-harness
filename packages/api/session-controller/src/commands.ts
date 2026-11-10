@@ -22,6 +22,7 @@ import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-ses
 import { SessionTitleInvalidError } from '@deepseek-ai/dsh-session-title'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
+import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import {
   ApiSessionAgentController,
@@ -112,6 +113,12 @@ export class SessionCommandController {
     if (request.workspaceId !== undefined && request.cwd !== undefined) {
       throw new RemoteError('gateway/bad-request', 'session.create accepts workspaceId or cwd, not both', {})
     }
+    if (request.rootPath !== undefined && request.cwd !== undefined) {
+      throw new RemoteError('gateway/bad-request', 'session.create accepts rootPath or cwd, not both', {})
+    }
+    if (request.rootPath !== undefined && request.workspaceId === undefined) {
+      throw new RemoteError('gateway/bad-request', 'session.create requires a workspaceId when rootPath is named', {})
+    }
     let workspace: Workspace | undefined
     if (request.workspaceId !== undefined) {
       workspace = this.ctx.workspaceRegistry.get(request.workspaceId)
@@ -121,7 +128,27 @@ export class SessionCommandController {
         })
       }
     }
-    const cwd = workspace?.path ?? request.cwd ?? this.defaultCwd
+    let rootPath: string | undefined
+    if (request.rootPath !== undefined && workspace !== undefined) {
+      try {
+        rootPath = await realpathNormalize(request.rootPath)
+      } catch (error) {
+        throw new RemoteError(
+          'gateway/bad-request',
+          `session.create rootPath "${request.rootPath}" does not resolve: ${String(error)}`,
+          {},
+          { cause: error },
+        )
+      }
+      if (!workspace.paths.includes(rootPath)) {
+        throw new RemoteError(
+          'gateway/bad-request',
+          `session.create rootPath "${request.rootPath}" is not a root of workspace "${workspace.id}"`,
+          {},
+        )
+      }
+    }
+    const cwd = workspace === undefined ? request.cwd ?? this.defaultCwd : rootPath ?? workspace.path
     let created: ApiSessionCreated
     try {
       created = await this.agents.createSession({

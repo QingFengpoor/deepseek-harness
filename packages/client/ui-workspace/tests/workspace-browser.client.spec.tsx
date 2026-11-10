@@ -64,7 +64,7 @@ const sessionState = (
   }
 }
 const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView => ({
-  workspaceId: wid(id), path: `/projects/${id}`, title,
+  workspaceId: wid(id), path: `/projects/${id}`, paths: [`/projects/${id}`], title,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
 const workspaceState = (
@@ -132,6 +132,10 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     notifyArchivedNotOpenable: vi.fn(),
     renameWorkspace: vi.fn(async () => {}),
     deleteWorkspace: vi.fn(async () => {}),
+    addPath: vi.fn(async () => workspace('created', [])),
+    removePath: vi.fn(async () => workspace('created', [])),
+    setPrimaryPath: vi.fn(async () => workspace('created', [])),
+    pickDirectory: vi.fn(async () => null),
     unarchiveSession: vi.fn(async () => {}),
     insertWorkspaceBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
@@ -285,6 +289,7 @@ describe('WorkspaceBrowser', () => {
         useWorkspaces: hook(workspaceState([{
           ...workspace('project', []),
           path: '/home/u/Documents/project',
+          paths: ['/home/u/Documents/project'],
           title: 'Project',
         }])),
         useHostInfo: selector => selector({ home: '/home/u', isLoopback: true }),
@@ -1288,6 +1293,70 @@ describe('WorkspaceBrowser', () => {
     expect(b.store.getSnapshot().groupExpansion).toEqual({ alpha: true })
     expect(screen.getByText('alpha-s')).toBeTruthy()
     expect(startSession).toHaveBeenCalledWith(wid('alpha'))
+  })
+
+  it('shows a root count and starts a new session in the chosen root', () => {
+    const startSession = vi.fn()
+    const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([multi])),
+      startSession,
+    })
+    expect(screen.getByLabelText('2 个根目录').textContent).toBe('2')
+    fireEvent.click(screen.getByRole('button', { name: '在“alpha”中新建会话' }))
+    fireEvent.click(screen.getByText('a-two'))
+    expect(startSession).toHaveBeenCalledWith(wid('alpha'), { rootPath: '/w/a-two' })
+  })
+
+  it('opens root management, appends a picked root, and promotes another root', async () => {
+    const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
+    const addPath = vi.fn(async () => multi)
+    const setPrimaryPath = vi.fn(async () => multi)
+    const pickDirectory = vi.fn(async () => '/w/new')
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([multi])),
+      addPath,
+      setPrimaryPath,
+      pickDirectory,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '工作区“alpha”的操作' }))
+    fireEvent.click(screen.getByText('管理根目录…'))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getByText('添加根目录…'))
+    await waitFor(() => {
+      expect(addPath).toHaveBeenCalledWith(wid('alpha'), '/w/new')
+    })
+    fireEvent.click(dialog.getByText('设为主根'))
+    await waitFor(() => {
+      expect(setPrimaryPath).toHaveBeenCalledWith(wid('alpha'), '/w/a-two')
+    })
+  })
+
+  it('creates a multi-root workspace from the creation dialog', async () => {
+    const created = { ...workspace('group', []), paths: ['/w/a', '/w/b'] }
+    const createWorkspace = vi.fn(async () => created)
+    const pickDirectory = vi.fn()
+      .mockResolvedValueOnce('/w/a')
+      .mockResolvedValueOnce('/w/b')
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([])),
+      createWorkspace,
+      pickDirectory,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '新建多根工作区' }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getByText('添加根目录…'))
+    await waitFor(() => { expect(dialog.getByText('a')).toBeTruthy() })
+    fireEvent.click(dialog.getByText('添加根目录…'))
+    await waitFor(() => { expect(dialog.getByText('b')).toBeTruthy() })
+    fireEvent.click(dialog.getByText('创建多根工作区'))
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledWith({ paths: ['/w/a', '/w/b'] })
+    })
   })
 
   it('auto-expands the Ungrouped bucket for a loose current session; its header has no menu and its ＋ is inert', () => {

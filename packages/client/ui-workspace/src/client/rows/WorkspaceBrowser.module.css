@@ -588,6 +588,86 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* Root-management dialog. */
+.roots {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rootRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-lg);
+}
+
+.rootInfo {
+  min-width: 0;
+}
+
+.rootTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rootName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.rootBadge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-l2);
+  color: var(--dsw-alias-text-l3);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.rootPath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rootActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rootConfirm {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l4);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rootConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 /* The stop-and-archive dialog's list of work that will be stopped. */
 .archiveActivity {
   margin: 0 0 8px;

@@ -162,6 +162,27 @@
   gap: 2px;
 }
 
+.projectTitleRow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rootCount {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-l2);
+  color: var(--dsw-alias-text-l3);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .title {
   min-width: 0;
   overflow: hidden;

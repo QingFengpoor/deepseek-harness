@@ -125,6 +125,42 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   }
 
   /**
+   * Append one existing directory as another root and merge the unary result.
+   * @param workspaceId - target Workspace.
+   * @param path - existing absolute directory.
+   * @returns generated Remote result.
+   */
+  async addPath(workspaceId: WorkspaceId, path: string): Promise<RemoteResult<WorkspaceValue>> {
+    const result = await this.remote.addPath({ workspaceId, path })
+    if (result.ok) this.upsert(result.value.workspace)
+    return result
+  }
+
+  /**
+   * Remove one root and merge the unary result.
+   * @param workspaceId - target Workspace.
+   * @param path - owned root path.
+   * @returns generated Remote result.
+   */
+  async removePath(workspaceId: WorkspaceId, path: string): Promise<RemoteResult<WorkspaceValue>> {
+    const result = await this.remote.removePath({ workspaceId, path })
+    if (result.ok) this.upsert(result.value.workspace)
+    return result
+  }
+
+  /**
+   * Promote one owned root to primary and merge the unary result.
+   * @param workspaceId - target Workspace.
+   * @param path - owned root path.
+   * @returns generated Remote result.
+   */
+  async setPrimaryPath(workspaceId: WorkspaceId, path: string): Promise<RemoteResult<WorkspaceValue>> {
+    const result = await this.remote.setPrimaryPath({ workspaceId, path })
+    if (result.ok) this.upsert(result.value.workspace)
+    return result
+  }
+
+  /**
    * Delete a Workspace and remove it from the local projection immediately.
    * @param workspaceId - target Workspace.
    * @returns generated Remote result.

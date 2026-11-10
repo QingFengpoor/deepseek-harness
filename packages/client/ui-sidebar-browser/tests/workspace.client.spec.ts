@@ -6,7 +6,7 @@ import { browserWorkspace } from '../src/client/electron/workspace.ts'
 
 const SESSION = 'session' as SessionId
 const workspace = (id: string, path: string, sessionIds: readonly SessionId[]): WorkspaceView => ({
-  workspaceId: id as WorkspaceId, path, title: path, sessionIds, createdAt: '', updatedAt: '',
+  workspaceId: id as WorkspaceId, path, paths: [path], title: path, sessionIds, createdAt: '', updatedAt: '',
 })
 const snapshot = (phase: WorkspaceSnapshot['phase'], items: readonly WorkspaceView[] = []): WorkspaceSnapshot => ({
   phase, items, state: 'idle', error: null, archivedSessionIds: [], pinnedSessionIds: [],

@@ -36,6 +36,35 @@ export function defaultWorkspaceTitle(
   return pathApi.basename(path) || pathApi.parse(path).root
 }
 
+/** The stored-path shape a Workspace record exposes; `paths` is absent on pre-multi-root records. */
+export interface WorkspacePathRecord {
+  readonly path: string
+  readonly paths?: readonly string[] | undefined
+}
+
+/**
+ * Read every root of a stored Workspace record in primary-first order.
+ *
+ * `path` remains the compatibility field and the primary root. Records written
+ * before multi-root carry no `paths`, so they resolve to exactly `[path]`.
+ * Duplicates (including a `paths` array that repeats the primary) collapse in
+ * first-seen order; the result is therefore non-empty and `paths[0] === path`.
+ * This is a pure shape operation: the values are already canonical because
+ * every write goes through {@link realpathNormalize}.
+ * @param record - stored record or any consumer projection with the same fields.
+ * @returns the record's roots, primary first.
+ */
+export function storedWorkspacePaths(record: WorkspacePathRecord): string[] {
+  const seen = new Set<string>()
+  const paths: string[] = []
+  for (const path of [record.path, ...(record.paths ?? [])]) {
+    if (seen.has(path)) continue
+    seen.add(path)
+    paths.push(path)
+  }
+  return paths
+}
+
 /**
  * Canonicalize a fully qualified directory path via `fs.realpath`: trailing
  * slashes, `..` segments, and symlinks are all resolved. This is the ONE

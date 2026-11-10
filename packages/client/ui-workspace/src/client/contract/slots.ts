@@ -263,6 +263,12 @@ export type WorkspaceBrowserInjected = {
   renameWorkspace: (workspaceId: WorkspaceId, title: string) => Promise<void>
   /** Delete only a Host Workspace registration; directory and Session logs remain. */
   deleteWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+  /** Append one existing directory as another Workspace root. */
+  addPath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
+  /** Remove one root; the last root is refused by the Host. */
+  removePath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
+  /** Promote one owned root to primary. */
+  setPrimaryPath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
   /**
    * Reorder a Workspace in the durable registry display order.
    * Omitted anchor appends to the end.
@@ -270,8 +276,10 @@ export type WorkspaceBrowserInjected = {
   insertWorkspaceBefore: (workspaceId: WorkspaceId, beforeWorkspaceId?: WorkspaceId) => Promise<void>
   /** Remove a Session from the registry-global archived set (the search results' restore button). */
   unarchiveSession: (sessionId: SessionId) => Promise<void>
-  /** Adopt a picked host directory as a real Workspace before targeting a Session. */
-  createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  /** Adopt picked host directories as a real Workspace before targeting a Session. */
+  createWorkspace: (input: { path?: string; paths?: readonly string[]; title?: string }) => Promise<WorkspaceView>
+  /** Open the host directory chooser once (used by root management). */
+  pickDirectory: () => Promise<string | null>
 }
 
 /** The browser's declared viewing store handle, shared with the row actions that write view state. */
@@ -486,7 +494,7 @@ export type WorkspaceBrowserProps =
  */
 export type WorkspacePickerInjected = DirectoryPickingInjected & {
   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
-  createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  createWorkspace: (input: { path?: string; paths?: readonly string[]; title?: string }) => Promise<WorkspaceView>
 }
 
 /**

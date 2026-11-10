@@ -77,7 +77,7 @@ describe('Workspace and Session hover handoff', () => {
     vi.useFakeTimers()
     try {
       const workspace = (key: string): GroupNode => ({
-        key, workspaceId: wid(key), cwd: `/projects/${key}`, createdAt: 0, label: key,
+        key, workspaceId: wid(key), cwd: `/projects/${key}`, paths: [`/projects/${key}`], createdAt: 0, label: key,
         sessionCount: 0, expanded: true, containsCurrent: false, sessions: [],
       })
       const session: SessionNode = {
@@ -198,7 +198,7 @@ describe('workspace browser rows', () => {
     const onToggle = vi.fn()
     const onCreate = vi.fn()
     const group: GroupNode = {
-      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
       sessionCount: 1, expanded: true, containsCurrent: true, sessions: [],
     }
     render(<ProjectRowItem group={group} onToggle={onToggle} onCreate={onCreate} t={t}
@@ -485,7 +485,7 @@ describe('workspace browser rows', () => {
     const onDelete = vi.fn()
     const onToggle = vi.fn()
     const group: GroupNode = {
-      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
       sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
     }
     render(<ProjectRowItem
@@ -516,7 +516,7 @@ describe('workspace browser rows', () => {
     const restoreClipboard = installClipboard(writeText)
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -539,7 +539,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -572,7 +572,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -598,7 +598,7 @@ describe('workspace browser rows', () => {
     const restoreClipboard = installClipboard(writeText)
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/home/u/Documents/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/home/u/Documents/project', paths: ['/home/u/Documents/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} home="/home/u" onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -618,7 +618,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: undefined, createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: undefined, paths: [], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} home="/home/u" onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -636,7 +636,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: 'C:\\Users\\u\\project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: 'C:\\Users\\u\\project', paths: ['C:\\Users\\u\\project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} home="C:\\Users\\u" onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -650,7 +650,7 @@ describe('workspace browser rows', () => {
 
   it('ungrouped bucket renders no workspace menu', () => {
     const group: GroupNode = {
-      key: '', workspaceId: undefined, cwd: undefined, createdAt: undefined, label: 'Ungrouped',
+      key: '', workspaceId: undefined, cwd: undefined, paths: [], createdAt: undefined, label: 'Ungrouped',
       sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
     }
     render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)

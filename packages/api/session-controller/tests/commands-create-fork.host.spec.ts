@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
@@ -155,6 +158,67 @@ describe('Session creation failures', () => {
     await ctx.fiber.dispose()
   })
 
+})
+
+describe('Session create root selection', () => {
+  it('starts in the selected Workspace root and attaches there', async () => {
+    const first = mkdtempSync(join(tmpdir(), 'session-root-'))
+    const second = join(first, 'second')
+    mkdirSync(second)
+    try {
+      const ctx = await baseContext()
+      const attachSession = vi.fn(() => Promise.resolve())
+      const workspace = {
+        id: 'workspace-1' as WorkspaceId,
+        path: first,
+        paths: [first, second],
+        sessionIds: [],
+        attachSession,
+      } as unknown as Workspace
+      ctx.provide('workspaceRegistry', {
+        get: () => workspace,
+        list: () => [workspace],
+        archivedSessionIds: [],
+      } as never)
+      const createSession = vi.fn(publishedSession(ctx, SessionId('selected-root')))
+      const controller = new SessionCommandController(ctx, controllerAgents(ctx, { createSession }), '/default')
+
+      await expect(controller.create({ workspaceId: workspace.id, rootPath: second }))
+        .resolves.toEqual({ sessionId: 'selected-root' })
+      expect(createSession.mock.calls[0]?.[0]?.cwd).toBe(second)
+      expect(attachSession).toHaveBeenCalledWith(SessionId('selected-root'))
+      await ctx.fiber.dispose()
+    } finally {
+      rmSync(first, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects rootPath outside the Workspace roots and contradictory targets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'session-root-reject-'))
+    try {
+      const ctx = await baseContext()
+      const workspace = {
+        id: 'workspace-2' as WorkspaceId,
+        path: root,
+        paths: [root],
+        sessionIds: [],
+        attachSession: () => Promise.resolve(),
+      } as unknown as Workspace
+      ctx.provide('workspaceRegistry', {
+        get: () => workspace,
+        list: () => [workspace],
+        archivedSessionIds: [],
+      } as never)
+      const controller = new SessionCommandController(ctx, controllerAgents(ctx), '/default')
+
+      await expectFailure(controller.create({ workspaceId: workspace.id, rootPath: join(root, 'missing') }), 'gateway/bad-request')
+      await expectFailure(controller.create({ rootPath: root }), 'gateway/bad-request')
+      await expectFailure(controller.create({ workspaceId: workspace.id, rootPath: root, cwd: root }), 'gateway/bad-request')
+      await ctx.fiber.dispose()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 function completedSession(

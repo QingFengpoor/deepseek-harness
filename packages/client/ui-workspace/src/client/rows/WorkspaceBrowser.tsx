@@ -19,7 +19,7 @@ import clsx from 'clsx'
 import {
   Button, HoverCardGroup, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
   IconChevronsUpDownOutlineRegular, IconClockOutlineRegular, IconCloseFillRegular,
-  IconFlatListOutlineRegular, IconFolderCloseRegular, IconProjectAddOutlineRegular,
+  IconFlatListOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular, IconProjectAddOutlineRegular,
   IconQueueOutlineRegular, IconSearchOutlineRegular, IconSlidersTwoOutlineRegular,
   IconWorkspaceTreeOutlineRegular, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -34,7 +34,7 @@ import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { ArchivedFilter, GroupNode, SessionNode, SessionOrderBy, SessionRowState } from '../tree.ts'
 import {
   deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
-  pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
+  pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY, workspaceLabel,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
@@ -289,6 +289,8 @@ type SessionTreeProps = Pick<
   onRenameRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
   /** Open the browser-owned delete-confirmation dialog for a real Workspace group. */
   onDeleteRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
+  /** Open the browser-owned root-management dialog for a real Workspace group. */
+  onManageRoots: (workspaceId: WorkspaceId) => void
   /** Open the rename dialog from a row title double-click. */
   onSessionRenameRequest: (sessionId: SessionNode['id'], currentTitle: string) => void
   /** One Session chosen from search that must be exposed and scrolled into view. */
@@ -318,7 +320,7 @@ function SessionTree({
   list, useSessionStatus, startSession, open, workspaces, ungroupedSessionIds,
   rowState, onLeaveArchivedOnly,
   workspaceReady, animationResetKey, usePanelInfo,
-  onRenameRequest, onDeleteRequest, onSessionRenameRequest,
+  onRenameRequest, onDeleteRequest, onManageRoots, onSessionRenameRequest,
   renderSlot,
   insertWorkspaceBefore,
   nestWorkspaces, groupExpansion, setGroupExpanded,
@@ -564,10 +566,11 @@ function SessionTree({
             if (group.expanded) dropWatermarks(key => withinGroup(key, group.key))
             setGroupExpanded(group.key, !group.expanded)
           }}
-          onCreate={() => {
+          onCreate={(rootPath) => {
             if (group.workspaceId !== undefined) {
               setGroupExpanded(group.key, true)
-              startSession(group.workspaceId)
+              if (rootPath === undefined) startSession(group.workspaceId)
+              else startSession(group.workspaceId, { rootPath })
             }
           }}
           drag={workspaceDragProps}
@@ -581,6 +584,10 @@ function SessionTree({
               delete: () => {
               /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
                 if (group.workspaceId !== undefined) onDeleteRequest(group.workspaceId, group.label)
+              },
+              manageRoots: () => {
+              /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
+                if (group.workspaceId !== undefined) onManageRoots(group.workspaceId)
               },
             }}
         />
@@ -908,6 +915,10 @@ export function WorkspaceBrowser({
   notifyArchivedNotOpenable,
   renameWorkspace,
   deleteWorkspace,
+  addPath,
+  removePath,
+  setPrimaryPath,
+  pickDirectory,
   insertWorkspaceBefore,
   unarchiveSession,
   createWorkspace,
@@ -1186,6 +1197,121 @@ export function WorkspaceBrowser({
     }
   }, [normalizedQuery, searchSessions])
 
+  // Multi-root creation dialog. The first root is primary; more roots can be
+  // appended before the Host create call.
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createRoots, setCreateRoots] = useState<readonly string[]>([])
+  const [createTitle, setCreateTitle] = useState('')
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const openCreate = () => {
+    setCreateRoots([])
+    setCreateTitle('')
+    setCreateError(null)
+    setCreateOpen(true)
+  }
+  const closeCreate = () => {
+    if (createBusy) return
+    setCreateOpen(false)
+    setCreateError(null)
+  }
+  const addCreateRoot = async (): Promise<void> => {
+    if (createBusy) return
+    setCreateBusy(true)
+    setCreateError(null)
+    try {
+      const path = await pickDirectory()
+      if (path !== null) {
+        setCreateRoots(previous => previous.includes(path)
+          ? previous
+          : [...previous, path])
+      }
+    } catch (reason: unknown) {
+      setCreateError(t('roots.addFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+  const submitCreate = async (): Promise<void> => {
+    if (createBusy) return
+    if (createRoots.length === 0) {
+      setCreateError(t('workspace.createGroup.empty'))
+      return
+    }
+    setCreateBusy(true)
+    setCreateError(null)
+    try {
+      const title = createTitle.trim()
+      const workspace = await createWorkspace({
+        paths: createRoots,
+        ...(title === '' ? {} : { title }),
+      })
+      setCreateOpen(false)
+      startSession(workspace.workspaceId, { clearPreviousDraft: false })
+    } catch (reason: unknown) {
+      setCreateError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+
+  // Root-management dialog. It survives row collapse and follows the live
+  // Workspace projection, so add/remove/primary mutations re-render the list.
+  const [rootsTargetId, setRootsTargetId] = useState<WorkspaceId | null>(null)
+  const rootsTarget = rootsTargetId === null
+    ? undefined
+    : workspaces.find(workspace => workspace.workspaceId === rootsTargetId)
+  const [rootsBusy, setRootsBusy] = useState<string | null>(null)
+  const [rootsError, setRootsError] = useState<string | null>(null)
+  const [rootRemoveTarget, setRootRemoveTarget] = useState<string | null>(null)
+  const closeRoots = () => {
+    if (rootsBusy !== null) return
+    setRootsTargetId(null)
+    setRootsError(null)
+    setRootRemoveTarget(null)
+  }
+  const addRoot = async (): Promise<void> => {
+    if (rootsTarget === undefined || rootsBusy !== null) return
+    const workspaceId = rootsTarget.workspaceId
+    setRootsBusy('add')
+    setRootsError(null)
+    try {
+      const path = await pickDirectory()
+      if (path !== null) await addPath(workspaceId, path)
+    } catch (reason: unknown) {
+      setRootsError(t('roots.addFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+    } finally {
+      setRootsBusy(null)
+    }
+  }
+  const removeRoot = async (path: string): Promise<void> => {
+    if (rootsTarget === undefined || rootsBusy !== null) return
+    const workspaceId = rootsTarget.workspaceId
+    setRootsBusy(path)
+    setRootsError(null)
+    try {
+      await removePath(workspaceId, path)
+      setRootRemoveTarget(null)
+    } catch (reason: unknown) {
+      setRootsError(t('roots.removeFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+    } finally {
+      setRootsBusy(null)
+    }
+  }
+  const makePrimary = async (path: string): Promise<void> => {
+    if (rootsTarget === undefined || rootsBusy !== null) return
+    const workspaceId = rootsTarget.workspaceId
+    setRootsBusy(path)
+    setRootsError(null)
+    try {
+      await setPrimaryPath(workspaceId, path)
+    } catch (reason: unknown) {
+      setRootsError(t('roots.primaryFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+    } finally {
+      setRootsBusy(null)
+    }
+  }
+
   // Rename dialog (browser-owned so it outlives row unmounts during collapse).
   // The stored title decides whether confirming is a real rename; the draft is
   // seeded with the label on screen. They differ for a Workspace still
@@ -1343,6 +1469,16 @@ export function WorkspaceBrowser({
           {/* Adding is the button's one action, so a composition with no
               picking affordance has nothing to offer here: the region hides the
               button rather than leaving a dead one in the header. */}
+          <Tooltip label={t('workspace.createGroup')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('workspace.createGroup')}
+              onClick={openCreate}
+            >
+              <IconFolderOpenRegular size={wide ? 16 : 18} />
+            </button>
+          </Tooltip>
           {directoryFlowAvailable && (
             <Tooltip label={t('workspace.add')} shortcutKeys={addShortcut?.keys} side="bottom" delayMs={500}>
               <button
@@ -1474,9 +1610,148 @@ export function WorkspaceBrowser({
                   setDeleteTarget({ workspaceId, title })
                   setDeleteError(null)
                 }}
+                onManageRoots={(workspaceId) => {
+                  setRootsTargetId(workspaceId)
+                  setRootsError(null)
+                  setRootRemoveTarget(null)
+                }}
               />
             ))}
       </div>
+
+      <Modal
+        open={createOpen}
+        onClose={closeCreate}
+        closeLabel={t('close')}
+        title={t('workspace.createGroup')}
+        description={t('workspace.createGroup.desc')}
+        footer={(
+          <>
+            <Button variant="outline" disabled={createBusy} onClick={closeCreate}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={createBusy || createRoots.length === 0}
+              onClick={() => { void submitCreate() }}
+            >
+              {t('workspace.createGroup.action')}
+            </Button>
+          </>
+        )}
+      >
+        <div className={css.roots}>
+          <input
+            className={css.renameInput}
+            value={createTitle}
+            aria-label={t('field.workspaceName')}
+            placeholder={t('field.workspaceName')}
+            disabled={createBusy}
+            onChange={(e) => { setCreateTitle(e.target.value); setCreateError(null) }}
+          />
+          {createRoots.length === 0 && (
+            <div className={css.deleteStatus}>{t('workspace.createGroup.empty')}</div>
+          )}
+          {createRoots.map((path, index) => (
+            <div className={css.rootRow} key={path}>
+              <div className={css.rootInfo}>
+                <div className={css.rootTitle}>
+                  <span className={css.rootName}>{workspaceLabel(path)}</span>
+                  {index === 0 && <span className={css.rootBadge}>{t('roots.primary')}</span>}
+                </div>
+                <div className={css.rootPath} title={path}>{path}</div>
+              </div>
+              <div className={css.rootActions}>
+                <Button
+                  variant="outline"
+                  disabled={createBusy}
+                  onClick={() => { setCreateRoots(previous => previous.filter(candidate => candidate !== path)) }}
+                >
+                  {t('roots.remove')}
+                </Button>
+              </div>
+            </div>
+          ))}
+          <Button variant="outline" disabled={createBusy} onClick={() => { void addCreateRoot() }}>
+            {createBusy ? t('roots.adding') : t('roots.add')}
+          </Button>
+          {createError !== null && <div className={css.renameError} role="alert">{createError}</div>}
+        </div>
+      </Modal>
+
+      <Modal
+        open={rootsTarget !== undefined}
+        onClose={closeRoots}
+        closeLabel={t('close')}
+        title={t('roots.title')}
+        description={t('roots.desc')}
+        footer={(
+          <Button variant="outline" disabled={rootsBusy !== null} onClick={closeRoots}>{t('close')}</Button>
+        )}
+      >
+        {rootsTarget !== undefined && (
+          <div className={css.roots}>
+            {rootsTarget.paths.map((path, index) => (
+              <div className={css.rootRow} key={path}>
+                <div className={css.rootInfo}>
+                  <div className={css.rootTitle}>
+                    <span className={css.rootName}>{workspaceLabel(path)}</span>
+                    {index === 0 && <span className={css.rootBadge}>{t('roots.primary')}</span>}
+                  </div>
+                  <div className={css.rootPath} title={path}>{path}</div>
+                </div>
+                <div className={css.rootActions}>
+                  {index !== 0 && (
+                    <Button
+                      variant="outline"
+                      disabled={rootsBusy !== null}
+                      onClick={() => { void makePrimary(path) }}
+                    >
+                      {t('roots.setPrimary')}
+                    </Button>
+                  )}
+                  {rootsTarget.paths.length > 1 && (
+                    <Button
+                      variant="outline"
+                      disabled={rootsBusy !== null}
+                      onClick={() => { setRootRemoveTarget(path) }}
+                    >
+                      {t('roots.remove')}
+                    </Button>
+                  )}
+                </div>
+                {rootRemoveTarget === path && (
+                  <div className={css.rootConfirm}>
+                    <span>{t('roots.removeConfirm', { path })}</span>
+                    <div className={css.rootConfirmActions}>
+                      <Button
+                        variant="outline"
+                        disabled={rootsBusy !== null}
+                        onClick={() => { setRootRemoveTarget(null) }}
+                      >
+                        {t('cancel')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className={css.deleteAction}
+                        disabled={rootsBusy !== null}
+                        onClick={() => { void removeRoot(path) }}
+                      >
+                        {t('roots.remove')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+            <Button variant="outline" disabled={rootsBusy !== null} onClick={() => { void addRoot() }}>
+              {rootsBusy === 'add' ? t('roots.adding') : t('roots.add')}
+            </Button>
+            {rootsBusy !== null && rootsBusy !== 'add' && (
+              <div className={css.deleteStatus} role="status">{t('roots.removing')}</div>
+            )}
+            {rootsError !== null && <div className={css.renameError} role="alert">{rootsError}</div>}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={renameTarget !== null}
