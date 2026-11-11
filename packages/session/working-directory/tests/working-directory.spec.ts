@@ -148,6 +148,24 @@ describe('Session working directories', () => {
     expect(renderContextSnapshot(await f.ctx.systemPrompt.assemble())).toBe('')
   })
 
+  it('lists every workspace root when the owning workspace has more than one', async () => {
+    await using f = await fixture()
+    const sibling = join(f.root, 'sibling')
+    await mkdir(sibling)
+    f.ctx.provide('sandboxPolicy', { resolve: () => ({ workspaceRoots: [f.root, sibling] }) } as never)
+    const assembly = await f.ctx.systemPrompt.assemble({ agent: f.agent, scope: f.agent })
+    expect(renderContextSnapshot(assembly)).toContain(`Workspace roots: ${JSON.stringify([f.root, sibling])}.`)
+  })
+
+  it('keeps the single-directory sentence when the policy reports one root', async () => {
+    await using f = await fixture()
+    f.ctx.provide('sandboxPolicy', { resolve: () => ({ workspaceRoots: [f.root] }) } as never)
+    const assembly = await f.ctx.systemPrompt.assemble({ agent: f.agent, scope: f.agent })
+    const snapshot = renderContextSnapshot(assembly)
+    expect(snapshot).toContain(`Current working directory: ${JSON.stringify(f.root)}.`)
+    expect(snapshot).not.toContain('Workspace roots:')
+  })
+
   it('uses and records the configured launch fallback for a Session without origin metadata', async () => {
     await using f = await fixture()
     const agent = await f.harness.create(SessionId('without-origin'))
