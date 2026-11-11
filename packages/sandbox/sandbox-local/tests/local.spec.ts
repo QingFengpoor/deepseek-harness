@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { LAUNCHER_FAILURE_EXIT } from '@deepseek-ai/node-addon-system/landlock-run'
 import { SANDBOX_UNAVAILABLE, SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
@@ -22,14 +22,22 @@ import {
 import type { Config } from '@deepseek-ai/dsh-sandbox-local'
 import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from '../src/profiles.ts'
 
-const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws' }
-const WW: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws' }
-
 /** Every temp dir created by this file (fake launchers and runner entries), removed after each test. */
 const tempDirs: string[] = []
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+
+/**
+ * A real workspace root: Landlock rules name inodes, so a fake path would be
+ * skipped. Kept for the whole suite (not in per-test `tempDirs`).
+ */
+const WS = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-ws-')))
+afterAll(() => {
+  rmSync(WS, { recursive: true, force: true })
+})
+const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: WS }
+const WW: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: WS }
 
 async function setup(config: Config = {}, internals: LocalSandboxProvider['internals'] = {}) {
   const ctx = new Context()
@@ -80,7 +88,7 @@ describe('profile dialects', () => {
   it('bwrap workspace-write: adds an ephemeral /tmp and rebinds the workspace root', () => {
     expect(bwrapProfileArgs(WW)).toEqual([
       '--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent',
-      '--tmpfs', '/tmp', '--bind-try', '/ws', '/ws',
+      '--tmpfs', '/tmp', '--bind-try', WS, WS,
     ])
   })
 
@@ -91,16 +99,26 @@ describe('profile dialects', () => {
   })
 
   it('landlock workspace-write: adds the host /tmp and the workspace root', () => {
-    expect(landlockProfileArgs(WW)).toEqual(['--ro', '/', '--rw', '/dev/null', '--rw', '/tmp', '--rw', '/ws'])
+    expect(landlockProfileArgs(WW)).toEqual(['--ro', '/', '--rw', '/dev/null', '--rw', '/tmp', '--rw', WS])
   })
 
   it('bwrap and landlock workspace-write: rebind/grant every root of a multi-root workspace', () => {
-    const multi: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws-a', workspaceRoots: ['/ws-a', '/ws-b'] }
+    const sibling = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-ws-sibling-')))
+    tempDirs.push(sibling)
+    const multi: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: WS, workspaceRoots: [WS, sibling] }
     expect(bwrapProfileArgs(multi)).toEqual([
       '--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent',
-      '--tmpfs', '/tmp', '--bind-try', '/ws-a', '/ws-a', '--bind-try', '/ws-b', '/ws-b',
+      '--tmpfs', '/tmp', '--bind-try', WS, WS, '--bind-try', sibling, sibling,
     ])
-    expect(landlockProfileArgs(multi)).toEqual(['--ro', '/', '--rw', '/dev/null', '--rw', '/tmp', '--rw', '/ws-a', '--rw', '/ws-b'])
+    expect(landlockProfileArgs(multi)).toEqual(['--ro', '/', '--rw', '/dev/null', '--rw', '/tmp', '--rw', WS, '--rw', sibling])
+  })
+
+  it('landlock workspace-write: skips a root deleted from disk instead of failing the launcher', () => {
+    // Landlock rules name real inodes; a vanished root must narrow the grant,
+    // not abort every confined command (the bwrap --bind-try equivalent).
+    const missing = join(tmpdir(), 'dsh-root-that-does-not-exist-xyz')
+    const multi: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: WS, workspaceRoots: [WS, missing] }
+    expect(landlockProfileArgs(multi)).toEqual(['--ro', '/', '--rw', '/dev/null', '--rw', '/tmp', '--rw', WS])
   })
 
   it('seatbelt read-only: allow-default with every file write denied except the /dev/null literal', () => {
@@ -108,12 +126,10 @@ describe('profile dialects', () => {
   })
 
   it('seatbelt workspace-write: one more allow for the canonicalized workspace root, /tmp, and the user temp dir', () => {
-    // `/ws` does not exist, so it is granted as spelled (the canonicalization
-    // fallback); `/tmp` and `os.tmpdir()` exist everywhere and are granted
-    // CANONICALIZED — Seatbelt matches resolved paths (`/tmp` IS
-    // `/private/tmp` on macOS), and both collapse to one grant on hosts
-    // where they resolve to the same directory.
-    const roots = [...new Set(['/ws', realpathSync('/tmp'), realpathSync(tmpdir())])]
+    // Every root is granted CANONICALIZED — Seatbelt matches resolved paths
+    // (`/tmp` IS `/private/tmp` on macOS), and `/tmp`/`os.tmpdir()` collapse
+    // to one grant on hosts where they resolve to the same directory.
+    const roots = [...new Set([WS, realpathSync('/tmp'), realpathSync(tmpdir())])]
     const allow = `(allow file-write* ${roots.map(root => `(subpath "${root}")`).join(' ')})`
     expect(seatbeltProfileArgs(WW)).toEqual(['-p', `${SEATBELT_RO_PROFILE} ${allow}`])
   })

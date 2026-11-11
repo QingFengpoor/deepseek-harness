@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-sandbox-local/profiles
  */
 
+import { existsSync } from 'node:fs'
 import { grantArgs as landlockGrantArgs } from '@deepseek-ai/node-addon-system/landlock-run'
 import { writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -29,13 +30,18 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
 
 /**
  * Build the Landlock launcher grants for one file-effect policy.
+ *
+ * Landlock rules reference real inodes, so a root deleted from disk after it
+ * was registered would make the launcher's ruleset construction fail and take
+ * every confined command with it. Skip missing roots (the bwrap dialect's
+ * `--bind-try` equivalent): a missing root grants nothing either way.
  * @param policy - file-effect policy to express as Landlock allow-list grants.
  * @returns launcher grant arguments before the trailing separator and command argv.
  */
 export function landlockProfileArgs(policy: SandboxPolicy): string[] {
   const readWrite = ['/dev/null']
   if (policy.mode === 'workspace-write') {
-    readWrite.push('/tmp', ...(policy.workspaceRoots ?? [policy.workspaceRoot]))
+    readWrite.push('/tmp', ...(policy.workspaceRoots ?? [policy.workspaceRoot]).filter(existsSync))
   }
   return landlockGrantArgs({ readOnly: ['/'], readWrite })
 }
