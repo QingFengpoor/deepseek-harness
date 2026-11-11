@@ -43,13 +43,15 @@ export function canonicalPath(path: string): string {
 /**
  * The roots one confined execution may WRITE under — the mode's meaning as a
  * canonical, deduplicated allow-list. `read-only` allows nothing;
- * `workspace-write` allows the policy's workspace root, the host `/tmp`, and
- * the per-user platform temp dir (`os.tmpdir()` — the real temp area for
+ * `workspace-write` allows every root the policy names (`workspaceRoots` when
+ * the workspace has several, else `workspaceRoot`), the host `/tmp`, and the
+ * per-user platform temp dir (`os.tmpdir()` — the real temp area for
  * mkstemp-family tools; omitting it would deny what the mode promises).
  * @param policy - the file-effect policy to derive the allow-list from.
  * @returns the canonical writable roots; empty exactly under `read-only`.
  */
 export function writableRoots(policy: SandboxExecutionPolicy): string[] {
   if (policy.mode !== 'workspace-write') return []
-  return [...new Set([policy.workspaceRoot, '/tmp', tmpdir()].map(canonicalPath))]
+  const workspaceRoots = policy.workspaceRoots ?? [policy.workspaceRoot]
+  return [...new Set([...workspaceRoots, '/tmp', tmpdir()].map(canonicalPath))]
 }

@@ -324,7 +324,13 @@ export class LocalSandboxProvider extends SandboxProvider {
    */
   async confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
     signal?.throwIfAborted()
-    policy = { ...policy, workspaceRoot: canonicalPath(policy.workspaceRoot) }
+    policy = {
+      ...policy,
+      workspaceRoot: canonicalPath(policy.workspaceRoot),
+      ...policy.workspaceRoots === undefined
+        ? {}
+        : { workspaceRoots: [...new Set(policy.workspaceRoots.map(canonicalPath))] },
+    }
     if (this.runnerCommand !== undefined) {
       return Promise.resolve<ConfinedArgv>({
         argv: [...this.runnerCommand, ...bwrapProfileArgs(policy), '--', ...argv],

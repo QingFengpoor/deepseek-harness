@@ -158,6 +158,29 @@ describe('SandboxPolicyService', () => {
     expect(ctx.get('sandboxPolicy')).toBeUndefined()
     expect((await ctx.systemPrompt.assemble()).contexts.find(context => context.name === 'sandbox:policy')).toBeUndefined()
   })
+
+  it('resolves the session cwd plus every root of its owning multi-root workspace', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/deploy' })
+    const active = session('sess-multi', '/ws-a')
+    ctx.provide('workspaceRegistry', { list: () => [{ sessionIds: ['sess-multi'], paths: ['/ws-a', '/ws-b'] }] } as never)
+    expect(ctx.sandboxPolicy.resolve({ session: active }).workspaceRoots).toEqual(['/ws-a', '/ws-b'])
+  })
+
+  it('falls back to the single-root shape when no workspace registry is mounted', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/deploy' })
+    const active = session('sess-single', '/ws-a')
+    expect(ctx.sandboxPolicy.resolve({ session: active }).workspaceRoots).toBeUndefined()
+  })
+
+  it('reflects a removed root on the next resolve and keeps the session cwd', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/deploy' })
+    const active = session('sess-remove', '/ws-a')
+    let paths = ['/ws-a', '/ws-b']
+    ctx.provide('workspaceRegistry', { list: () => [{ sessionIds: ['sess-remove'], paths }] } as never)
+    expect(ctx.sandboxPolicy.resolve({ session: active }).workspaceRoots).toEqual(['/ws-a', '/ws-b'])
+    paths = ['/ws-a']
+    expect(ctx.sandboxPolicy.resolve({ session: active }).workspaceRoots).toBeUndefined()
+  })
 })
 
 describe('sandbox:policy request context', () => {
@@ -224,6 +247,15 @@ describe('sandbox:policy request context', () => {
 
     expect(await policyContext(ctx, resumed)).toContain('workspace-write')
     expect((await ctx.systemPrompt.assemble()).contexts.find(context => context.name === 'sandbox:policy')?.text).toBe('')
+  })
+
+  it('names every root of a multi-root workspace in the request context', async () => {
+    const ctx = await promptMounted({ mode: 'workspace-write' })
+    const active = session('sess-context-multi', '/projects/current')
+    ctx.provide('workspaceRegistry', {
+      list: () => [{ sessionIds: ['sess-context-multi'], paths: ['/projects/current', '/projects/sibling'] }],
+    } as never)
+    expect(await policyContext(ctx, active)).toBe(`Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under these session workspace roots: ${JSON.stringify(['/projects/current', '/projects/sibling'])}. Some platform temporary areas may also be writable.`)
   })
 })
 

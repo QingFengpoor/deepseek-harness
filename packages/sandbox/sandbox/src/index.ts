@@ -43,6 +43,14 @@ export interface SandboxExecutionPolicy {
   /** Absolute root directory `workspace-write` may write under. */
   workspaceRoot: string
   /**
+   * Every absolute root `workspace-write` may write under when the calling
+   * workspace has more than its primary root. `workspaceRoot` remains the
+   * primary root; absent means the single-`workspaceRoot` behaviour. Consumers
+   * that express the grant as an allow-list derive it from `writableRoots`,
+   * never from `workspaceRoot` alone.
+   */
+  workspaceRoots?: readonly string[]
+  /**
    * Opaque identity of the calling session (the branded `dsh-session`
    * SessionId). Backends key per-session state off it (e.g. windows-acl gives
    * each live session/workspace pair a random private temp directory and SID,

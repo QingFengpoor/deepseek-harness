@@ -80,7 +80,7 @@ describe('profile dialects', () => {
   it('bwrap workspace-write: adds an ephemeral /tmp and rebinds the workspace root', () => {
     expect(bwrapProfileArgs(WW)).toEqual([
       '--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent',
-      '--tmpfs', '/tmp', '--bind', '/ws', '/ws',
+      '--tmpfs', '/tmp', '--bind-try', '/ws', '/ws',
     ])
   })
 
@@ -92,6 +92,15 @@ describe('profile dialects', () => {
 
   it('landlock workspace-write: adds the host /tmp and the workspace root', () => {
     expect(landlockProfileArgs(WW)).toEqual(['--ro', '/', '--rw', '/dev/null', '--rw', '/tmp', '--rw', '/ws'])
+  })
+
+  it('bwrap and landlock workspace-write: rebind/grant every root of a multi-root workspace', () => {
+    const multi: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws-a', workspaceRoots: ['/ws-a', '/ws-b'] }
+    expect(bwrapProfileArgs(multi)).toEqual([
+      '--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent',
+      '--tmpfs', '/tmp', '--bind-try', '/ws-a', '/ws-a', '--bind-try', '/ws-b', '/ws-b',
+    ])
+    expect(landlockProfileArgs(multi)).toEqual(['--ro', '/', '--rw', '/dev/null', '--rw', '/tmp', '--rw', '/ws-a', '--rw', '/ws-b'])
   })
 
   it('seatbelt read-only: allow-default with every file write denied except the /dev/null literal', () => {

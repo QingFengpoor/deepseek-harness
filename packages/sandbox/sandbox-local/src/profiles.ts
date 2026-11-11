@@ -17,7 +17,12 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
   const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent']
   if (policy.mode === 'workspace-write') {
     args.push('--tmpfs', '/tmp')
-    args.push('--bind', policy.workspaceRoot, policy.workspaceRoot)
+    // --bind-try, not --bind: a root deleted from disk after it was registered
+    // must narrow the grant, not abort every confined command with a bwrap
+    // setup failure. Missing roots grant nothing either way.
+    for (const root of policy.workspaceRoots ?? [policy.workspaceRoot]) {
+      args.push('--bind-try', root, root)
+    }
   }
   return args
 }
@@ -30,7 +35,7 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
 export function landlockProfileArgs(policy: SandboxPolicy): string[] {
   const readWrite = ['/dev/null']
   if (policy.mode === 'workspace-write') {
-    readWrite.push('/tmp', policy.workspaceRoot)
+    readWrite.push('/tmp', ...(policy.workspaceRoots ?? [policy.workspaceRoot]))
   }
   return landlockGrantArgs({ readOnly: ['/'], readWrite })
 }
