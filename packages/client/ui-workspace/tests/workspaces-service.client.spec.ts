@@ -56,6 +56,7 @@ function workspace(
   return {
     workspaceId: wid(id),
     path: `/w/${id}`,
+    paths: [`/w/${id}`],
     title: id,
     sessionIds,
     createdAt,
@@ -212,6 +213,18 @@ class FakeWorkspaces implements IWorkspaces {
     this.list = new MutableSource(initial)
   }
 
+  addPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    return Promise.resolve({ workspaceId, title: '', path, paths: [path], sessionIds: [], createdAt: '', updatedAt: '' } as WorkspaceView)
+  }
+
+  removePath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    return Promise.resolve({ workspaceId, title: '', path, paths: [path], sessionIds: [], createdAt: '', updatedAt: '' } as WorkspaceView)
+  }
+
+  setPrimaryPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    return Promise.resolve({ workspaceId, title: '', path, paths: [path], sessionIds: [], createdAt: '', updatedAt: '' } as WorkspaceView)
+  }
+
   archiveSession(sessionId: SessionId): Promise<void> {
     this.archiveCalls.push(sessionId)
     return this.onArchive(sessionId)
@@ -356,6 +369,19 @@ describe('UiWorkspaceService', () => {
     await setImmediate()
     expect(b.workspaces.initializeDefault).not.toHaveBeenCalled()
     expect(b.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('clears a current Session whose Controller binding disappeared', async () => {
+    const b = bench({ workspaces: workspaceState(), sessions: sessionState([summary('gone')]) })
+    await setImmediate()
+    b.uiWorkspace.openSession(sid('gone'))
+    const retained = b.sessions.retained.find(item => item.reference.sessionId === sid('gone'))
+    expect(retained).toBeDefined()
+    const clearedBefore = b.selectPanel.mock.calls.filter(([panel]) => panel === null).length
+    retained!.release()
+    b.sessions.list.set(sessionState([summary('gone')]))
+    await setImmediate()
+    expect(b.selectPanel.mock.calls.filter(([panel]) => panel === null).length).toBeGreaterThan(clearedBefore)
   })
 
   it('publishes a startup directory failure once without creating a Session', async () => {
@@ -680,6 +706,31 @@ describe('UiWorkspaceService', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([sid('new'), sid('new')])
     await expect(b.uiWorkspace.connectWorkspace(wid('missing'))).rejects.toThrow('unknown workspace')
     expect(b.sessions.retain).not.toHaveBeenCalled()
+  })
+
+  it('starts a new Session in the selected root and reuses only that root blank', async () => {
+    const multi = { ...workspace('a', [sid('root-a-blank'), sid('root-b-blank')]), paths: ['/w/a', '/w/a-two'] }
+    const b = bench({
+      sessions: sessionState([
+        summary('root-a-blank', { blank: true, cwd: '/w/a' }),
+        summary('root-b-blank', { blank: true, cwd: '/w/a-two' }),
+      ], 'pending'),
+      workspaces: workspaceState([multi]),
+    })
+    await expect(b.uiWorkspace.connectWorkspace(wid('a'), { rootPath: '/w/a-two' }))
+      .resolves.toBe(sid('root-b-blank'))
+    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: wid('a'), rootPath: '/w/a-two', sessionId: sid('root-b-blank'),
+    })
+
+    b.sessions.create.mockClear()
+    b.sessions.retain.mockClear()
+    b.uiWorkspace.startSession(wid('a'), { rootPath: '/w/a-two' })
+    await vi.waitFor(() => {
+      expect(b.sessions.create).toHaveBeenCalledWith({
+        workspaceId: wid('a'), rootPath: '/w/a-two', sessionId: sid('root-b-blank'),
+      })
+    })
   })
 
   it('returns New Session to the Workspace blank that holds its unsent draft', async () => {

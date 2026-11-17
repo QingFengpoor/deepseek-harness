@@ -28,7 +28,7 @@ const t: WorkspacePickerProps['t'] = makeTranslate(zh, commonZh)
 const wid = (id: string) => id as WorkspaceId
 function workspace(id: string, title = id): WorkspaceView {
   return {
-    workspaceId: wid(id), path: `/projects/${id}`, title, sessionIds: [],
+    workspaceId: wid(id), path: `/projects/${id}`, paths: [`/projects/${id}`], title, sessionIds: [],
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   }
 }

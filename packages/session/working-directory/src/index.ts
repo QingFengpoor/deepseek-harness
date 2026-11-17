@@ -20,6 +20,16 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/**
+ * Structural view of the sandbox policy home (`ctx.sandboxPolicy`): the one
+ * fact this unit reads. Structural so the session unit takes no package
+ * dependency on the policy home, which may be absent in minimal deployments.
+ */
+interface SandboxPolicyView {
+  /** Resolve the policy for one session; only the writable roots are read. */
+  resolve(request: { session: Session }): { workspaceRoots?: readonly string[] }
+}
+
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     /**
@@ -170,7 +180,15 @@ export class WorkingDirectoryService extends Service {
   }
 
   private contextText(session: Session): string {
-    return `Current working directory: ${JSON.stringify(this.get(session))}.`
+    const cwd = `Current working directory: ${JSON.stringify(this.get(session))}.`
+    // The workspace may own several roots (multi-root model); list them so the
+    // model knows every path it may write, not just the session cwd. Resolved
+    // through the policy home for one source of truth; absent/undecidable
+    // policy leaves the single-directory sentence unchanged.
+    const policy = this.ctx.get('sandboxPolicy') as SandboxPolicyView | undefined
+    const roots = policy?.resolve({ session }).workspaceRoots
+    if (roots === undefined || roots.length <= 1) return cwd
+    return `${cwd} Workspace roots: ${JSON.stringify(roots)}.`
   }
 
   private async directory(path: string, cwd: string, signal: AbortSignal): Promise<string> {

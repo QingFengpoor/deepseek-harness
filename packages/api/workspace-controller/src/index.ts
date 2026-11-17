@@ -10,6 +10,7 @@ import { DirectoryPickerController } from './directory-picker.ts'
 import { WorkspaceFeed, workspaceView } from './feed.ts'
 import { defaultWorkspaceDirectory, validateDocumentsDirectory } from './default-directory.ts'
 import type {
+  WorkspaceAddPathRequest,
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
   WorkspaceBaseline,
@@ -24,7 +25,9 @@ import type {
   WorkspaceOrderValue,
   WorkspacePinSessionRequest,
   WorkspacePinValue,
+  WorkspaceRemovePathRequest,
   WorkspaceRenameRequest,
+  WorkspaceSetPrimaryPathRequest,
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
@@ -119,6 +122,36 @@ export class WorkspaceController extends TypertRemoteService {
   @Remote('rename')
   rename(request: WorkspaceRenameRequest): Promise<WorkspaceValue> {
     return this.commands.rename(request)
+  }
+
+  /**
+   * Append one existing directory as another root of a Workspace.
+   * @param request - Workspace identity and directory path.
+   * @returns the updated Workspace projection.
+   */
+  @Remote('addPath')
+  addPath(request: WorkspaceAddPathRequest): Promise<WorkspaceValue> {
+    return this.commands.addPath(request)
+  }
+
+  /**
+   * Remove one root from a Workspace.
+   * @param request - Workspace identity and owned root path.
+   * @returns the updated Workspace projection.
+   */
+  @Remote('removePath')
+  removePath(request: WorkspaceRemovePathRequest): Promise<WorkspaceValue> {
+    return this.commands.removePath(request)
+  }
+
+  /**
+   * Promote one owned root to the Workspace's primary root.
+   * @param request - Workspace identity and owned root path.
+   * @returns the updated Workspace projection.
+   */
+  @Remote('setPrimaryPath')
+  setPrimaryPath(request: WorkspaceSetPrimaryPathRequest): Promise<WorkspaceValue> {
+    return this.commands.setPrimaryPath(request)
   }
 
   /**

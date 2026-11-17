@@ -137,6 +137,39 @@ describe('WorkspaceController commands', () => {
     })
   })
 
+  it('creates and manages multiple roots with typed path failures', async () => {
+    const { controller, root } = await harness()
+    const first = stageDir(root, 'mr-first')
+    const second = stageDir(root, 'mr-second')
+    const third = stageDir(root, 'mr-third')
+    const created = await controller.create({ paths: [first, second], title: 'Group' })
+    expect(created.workspace).toMatchObject({ path: first, paths: [first, second], title: 'Group' })
+    const workspaceId = created.workspace.workspaceId
+
+    await expect(controller.create({ paths: [first, second] })).resolves.toMatchObject({ created: false })
+    await expect(controller.addPath({ workspaceId, path: second }))
+      .rejects.toMatchObject({ code: 'workspace/duplicate-path', details: { path: second } })
+
+    const added = await controller.addPath({ workspaceId, path: third })
+    expect(added.workspace.paths).toEqual([first, second, third])
+
+    const other = await controller.create({ path: stageDir(root, 'mr-other') })
+    await expect(controller.addPath({ workspaceId: other.workspace.workspaceId, path: first }))
+      .rejects.toMatchObject({ code: 'workspace/path-conflict', details: { path: first } })
+
+    await expect(controller.removePath({ workspaceId, path: second }))
+      .resolves.toMatchObject({ workspace: { paths: [first, third] } })
+    await expect(controller.removePath({ workspaceId, path: second }))
+      .rejects.toMatchObject({ code: 'workspace/path-not-owned' })
+
+    const promoted = await controller.setPrimaryPath({ workspaceId, path: third })
+    expect(promoted.workspace).toMatchObject({ path: third, paths: [third, first] })
+    await expect(controller.removePath({ workspaceId, path: third }))
+      .resolves.toMatchObject({ workspace: { paths: [first] } })
+    await expect(controller.removePath({ workspaceId, path: first }))
+      .rejects.toMatchObject({ code: 'workspace/last-path', details: { workspaceId } })
+  })
+
   it('maps invalid paths, blank names, conflicts, and unknown ids to stable failures', async () => {
     const { controller, root } = await harness()
     const first = await controller.create({ path: stageDir(root, 'first') })

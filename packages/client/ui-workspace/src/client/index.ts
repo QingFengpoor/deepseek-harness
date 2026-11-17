@@ -1,4 +1,4 @@
-import { IconEditOutlineRegular, IconTrashOutlineRegular, IconPinFillRegular, IconPinOutlineRegular, IconUnarchiveOutlineRegular, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCopyOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFolderOpenRegular, IconEditOutlineRegular, IconTrashOutlineRegular, IconPinFillRegular, IconPinOutlineRegular, IconUnarchiveOutlineRegular, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCopyOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SessionMenu } from './session-actions/SessionMenu.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-context-menu/client'
 /**
@@ -263,9 +263,12 @@ export function apply(ctx: Context): void {
     dismissToast: () => { rowToast.set(null) },
   })
   const workspaceActionRequest = createSnapshotStore<WorkspaceActionRequest | null>(null)
-  const requestWorkspaceAction = (workspaceId: WorkspaceId, displayTitle: string, action: 'rename' | 'delete'): void => {
+  const requestWorkspaceAction = (workspaceId: WorkspaceId, displayTitle: string, action: 'rename' | 'delete' | 'roots'): void => {
     const workspace = workspaces.list.getSnapshot().items.find(row => row.workspaceId === workspaceId)
-    if (workspace === undefined || !ctx.remoteAccess.source('workspace', workspaceId, `workspace/${action}`).getSnapshot()) return
+    if (workspace === undefined) return
+    // The roots dialog only opens with an exact target; each mutation it offers
+    // still asks its own remote-access source, so the dialog itself gates nothing.
+    if (action !== 'roots' && !ctx.remoteAccess.source('workspace', workspaceId, `workspace/${action}`).getSnapshot()) return
     workspaceActionRequest.set({ action, workspaceId, displayTitle, storedTitle: workspace.title })
   }
   ctx.slots.inject('contextMenu.icon', function* () {
@@ -274,6 +277,7 @@ export function apply(ctx: Context): void {
       'workspace.pin': IconPinOutlineRegular, 'workspace.unpin': IconPinFillRegular,
       'workspace.archive': IconArchiveOutlineRegular, 'workspace.unarchive': IconUnarchiveOutlineRegular,
       'workspace.fork': IconBranchOutlineRegular, 'workspace.copy': IconCopyOutlineRegular,
+      'workspace.roots': IconFolderOpenRegular,
     })) yield ctx.slots.register({ name: 'contextMenu.icon', key }, Icon)
   })
   ctx.effect(() => ctx.contextMenus.register({
@@ -281,6 +285,19 @@ export function apply(ctx: Context): void {
     resolve: ({ workspaceId, displayTitle }) => ctx.remoteAccess.source('workspace', workspaceId, 'workspace/rename').getSnapshot()
       ? [{ id: 'rename', label: ctx.locale.bind(NS)('rename'), icon: { key: 'workspace.rename' }, run: () => { requestWorkspaceAction(workspaceId, displayTitle, 'rename') } }] : [],
   }), 'workspace: rename menu action')
+  ctx.effect(() => ctx.contextMenus.register({
+    id: 'workspace.roots', target: 'workspace', order: 150,
+    resolve: ({ workspaceId, displayTitle }) => {
+      // The dialog's three mutations each ask their own endpoint; offering the
+      // entry needs at least one of them granted, or the dialog opens empty.
+      const manageable = ['workspace/addPath', 'workspace/removePath', 'workspace/setPrimaryPath']
+        .some(endpoint => ctx.remoteAccess.source('workspace', workspaceId, endpoint).getSnapshot())
+      return manageable ? [{
+        id: 'manage-roots', label: ctx.locale.bind(NS)('roots.manage'), icon: { key: 'workspace.roots' },
+        run: () => { requestWorkspaceAction(workspaceId, displayTitle, 'roots') },
+      }] : []
+    },
+  }), 'workspace: manage roots menu action')
   ctx.effect(() => ctx.contextMenus.register({
     id: 'workspace.delete', target: 'workspace', order: 300,
     resolve: ({ workspaceId, displayTitle }) => ctx.remoteAccess.source('workspace', workspaceId, 'workspace/delete').getSnapshot()
@@ -309,11 +326,15 @@ export function apply(ctx: Context): void {
     notifyArchivedNotOpenable: () => { notify({ kind: 'archivedNotOpenable' }) },
     renameWorkspace: async (workspaceId, title) => { await workspaces.rename(workspaceId, title) },
     deleteWorkspace: async (workspaceId) => { await workspaces.delete(workspaceId) },
+    addPath: async (workspaceId, path) => workspaces.addPath(workspaceId, path),
+    removePath: async (workspaceId, path) => workspaces.removePath(workspaceId, path),
+    setPrimaryPath: async (workspaceId, path) => workspaces.setPrimaryPath(workspaceId, path),
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
     unarchiveSession: async (sessionId) => { await uiWorkspace.unarchiveSession(sessionId) },
     createWorkspace: input => workspaces.create(input),
+    pickDirectory: () => uiWorkspace.pickDirectory(),
     requestSearch: shortcutControls.search,
     requestAddWorkspace: shortcutControls.add,
     closeAddWorkspace: shortcutControls.closeAdd,

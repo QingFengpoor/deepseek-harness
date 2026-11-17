@@ -17,8 +17,10 @@ export type { DirectoryEntry, DirectoryListing } from '@deepseek-ai/dsh-host-dir
 /** One durable Workspace projected for browser consumers. */
 export interface WorkspaceView {
   readonly workspaceId: WorkspaceId
-  /** Canonical host directory path. */
+  /** Canonical primary host directory path; always equals `paths[0]`. */
   readonly path: string
+  /** Every canonical root, primary first and duplicate-free. */
+  readonly paths: readonly string[]
   /** User-visible title. */
   readonly title: string
   /** Sessions accounted to this Workspace in manual order. */
@@ -35,6 +37,14 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'workspace/invalid-path': { readonly path: string }
     /** Another Workspace already uses the requested name. */
     'workspace/name-conflict': { readonly name: string }
+    /** A root already belongs to another Workspace; one path has one owner. */
+    'workspace/path-conflict': { readonly path: string; readonly workspaceId: WorkspaceId }
+    /** The root is already registered on the target Workspace. */
+    'workspace/duplicate-path': { readonly path: string }
+    /** Removing the root would leave the Workspace with no roots. */
+    'workspace/last-path': { readonly workspaceId: WorkspaceId }
+    /** The target Workspace does not own the named root. */
+    'workspace/path-not-owned': { readonly path: string; readonly workspaceId: WorkspaceId }
     /**
      * The Session still has running work — its own turn, a subagent, a
      * background job, or an active schedule — so archiving was refused
@@ -61,9 +71,16 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   }
 }
 
-/** Existing directory requested for Workspace adoption. */
+/**
+ * Existing directories requested for Workspace adoption. `paths` is the
+ * multi-root form; `path` remains the compatibility form for old clients.
+ * At least one non-empty form must be supplied.
+ */
 export interface WorkspaceCreateRequest {
-  readonly path: string
+  readonly path?: string
+  readonly paths?: readonly string[]
+  /** Display title for a newly created Workspace; ignored when an existing root set resolves. */
+  readonly title?: string
 }
 
 /** Created or previously registered Workspace. */
@@ -76,6 +93,24 @@ export interface WorkspaceCreateValue {
 export interface WorkspaceRenameRequest {
   readonly workspaceId: WorkspaceId
   readonly title: string
+}
+
+/** Add one existing directory as another root of a Workspace. */
+export interface WorkspaceAddPathRequest {
+  readonly workspaceId: WorkspaceId
+  readonly path: string
+}
+
+/** Remove one root from a Workspace (the last root is refused). */
+export interface WorkspaceRemovePathRequest {
+  readonly workspaceId: WorkspaceId
+  readonly path: string
+}
+
+/** Promote one owned root to the Workspace's primary root. */
+export interface WorkspaceSetPrimaryPathRequest {
+  readonly workspaceId: WorkspaceId
+  readonly path: string
 }
 
 /** Workspace mutation returning the complete changed row. */

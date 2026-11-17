@@ -5,14 +5,19 @@ import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import {
   WorkspaceActiveSessionError,
   WorkspaceArchivedSessionPinError,
+  WorkspaceDuplicatePathError,
   WorkspaceId,
+  WorkspaceLastPathError,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
+  WorkspacePathConflictError,
+  WorkspacePathNotOwnedError,
   WorkspaceUnknownSessionError,
 } from '@deepseek-ai/dsh-workspace'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { workspaceView } from './feed.ts'
 import type {
+  WorkspaceAddPathRequest,
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
   WorkspaceCreateRequest,
@@ -24,7 +29,9 @@ import type {
   WorkspaceOrderValue,
   WorkspacePinSessionRequest,
   WorkspacePinValue,
+  WorkspaceRemovePathRequest,
   WorkspaceRenameRequest,
+  WorkspaceSetPrimaryPathRequest,
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
@@ -38,25 +45,38 @@ export class WorkspaceCommands {
   constructor(private readonly ctx: Context) {}
 
   /**
-   * Create or resolve one Workspace over an existing directory.
-   * @param request - directory path to register.
+   * Create or resolve one Workspace over one or more existing directories.
+   * `paths` is the multi-root form; `path` remains the compatibility form.
+   * @param request - directory path(s) to register.
    * @returns the Workspace and whether this call created it.
    */
   create(request: WorkspaceCreateRequest): Promise<WorkspaceCreateValue> {
+    const requested = request.paths ?? (request.path === undefined ? [] : [request.path])
     return this.enqueue(async () => {
-      try {
-        const existing = await this.ctx.workspaceRegistry.resolveByPath(request.path)
-        if (existing !== undefined) {
-          return { workspace: workspaceView(existing), created: false }
-        }
-        const workspace = await this.ctx.workspaceRegistry.create(request.path)
-        return { workspace: workspaceView(workspace), created: true }
-      } catch (error) {
-        if (remoteErrorOf(error) !== undefined) throw error
+      if (requested.length === 0) {
         throw new RemoteError(
           'workspace/invalid-path',
-          `cannot create a Workspace at "${request.path}": ${errorMessage(error)}`,
-          { path: request.path },
+          'Workspace creation requires at least one directory path',
+          { path: '' },
+        )
+      }
+      try {
+        if (requested.length === 1) {
+          const existing = await this.ctx.workspaceRegistry.resolveByPath(requested[0] as string)
+          if (existing !== undefined) {
+            return { workspace: workspaceView(existing), created: false }
+          }
+        }
+        const before = new Set(this.ctx.workspaceRegistry.list().map(workspace => workspace.id))
+        const workspace = await this.ctx.workspaceRegistry.create(requested, request.title)
+        return { workspace: workspaceView(workspace), created: !before.has(workspace.id) }
+      } catch (error) {
+        if (remoteErrorOf(error) !== undefined) throw error
+        if (error instanceof WorkspacePathConflictError) throw this.pathConflict(error)
+        throw new RemoteError(
+          'workspace/invalid-path',
+          `cannot create a Workspace at "${requested[0] as string}": ${errorMessage(error)}`,
+          { path: requested[0] as string },
           { cause: error },
         )
       }
@@ -122,6 +142,85 @@ export class WorkspaceCommands {
       if (!(error instanceof WorkspaceOrderInvalidError)) throw error
       throw workspaceNotFound(error.workspaceId)
     }
+  }
+
+  /**
+   * Append one existing directory as another root of a Workspace.
+   * @param request - Workspace identity and directory path.
+   * @returns the updated Workspace projection.
+   */
+  addPath(request: WorkspaceAddPathRequest): Promise<WorkspaceValue> {
+    return this.enqueue(async () => {
+      const workspace = this.requireWorkspace(request.workspaceId)
+      try {
+        await this.ctx.workspaceRegistry.addPath(WorkspaceId(request.workspaceId), request.path)
+      } catch (error) {
+        throw this.pathMutationError(error, request.path)
+      }
+      return { workspace: workspaceView(workspace) }
+    })
+  }
+
+  /**
+   * Remove one root from a Workspace.
+   * @param request - Workspace identity and owned root path.
+   * @returns the updated Workspace projection.
+   */
+  removePath(request: WorkspaceRemovePathRequest): Promise<WorkspaceValue> {
+    return this.enqueue(async () => {
+      const workspace = this.requireWorkspace(request.workspaceId)
+      try {
+        await this.ctx.workspaceRegistry.removePath(WorkspaceId(request.workspaceId), request.path)
+      } catch (error) {
+        throw this.pathMutationError(error, request.path)
+      }
+      return { workspace: workspaceView(workspace) }
+    })
+  }
+
+  /**
+   * Promote one owned root to the Workspace's primary root.
+   * @param request - Workspace identity and owned root path.
+   * @returns the updated Workspace projection.
+   */
+  setPrimaryPath(request: WorkspaceSetPrimaryPathRequest): Promise<WorkspaceValue> {
+    return this.enqueue(async () => {
+      const workspace = this.requireWorkspace(request.workspaceId)
+      try {
+        await this.ctx.workspaceRegistry.setPrimaryPath(WorkspaceId(request.workspaceId), request.path)
+      } catch (error) {
+        throw this.pathMutationError(error, request.path)
+      }
+      return { workspace: workspaceView(workspace) }
+    })
+  }
+
+  private pathMutationError(error: unknown, path: string): unknown {
+    if (error instanceof WorkspacePathConflictError) return this.pathConflict(error)
+    if (error instanceof WorkspaceDuplicatePathError) {
+      return new RemoteError('workspace/duplicate-path', error.message, { path: error.path }, { cause: error })
+    }
+    if (error instanceof WorkspaceLastPathError) {
+      return new RemoteError('workspace/last-path', error.message, { workspaceId: error.workspaceId }, { cause: error })
+    }
+    if (error instanceof WorkspacePathNotOwnedError) {
+      return new RemoteError(
+        'workspace/path-not-owned',
+        error.message,
+        { path: error.path, workspaceId: error.workspaceId },
+        { cause: error },
+      )
+    }
+    return new RemoteError('workspace/invalid-path', errorMessage(error), { path }, { cause: error })
+  }
+
+  private pathConflict(error: WorkspacePathConflictError): RemoteError<'workspace/path-conflict'> {
+    return new RemoteError(
+      'workspace/path-conflict',
+      error.message,
+      { path: error.path, workspaceId: error.workspaceId },
+      { cause: error },
+    )
   }
 
   /**
