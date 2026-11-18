@@ -34,7 +34,7 @@ import type {
   PreparedReferencedMessage, SessionReferenceCandidate, SessionReferenceInput,
   SessionReferenceMentionCandidate, SessionReferenceSource,
 } from './types.ts'
-import { formatSessionReferenceMention, parseSessionReferenceText } from './uri.ts'
+import { formatSessionReferenceMention, parseSessionReferenceText, type ParsedSessionReferenceText } from './uri.ts'
 
 export type * from './types.ts'
 export type { Config, SessionReferenceErrorCode } from './config.ts'
@@ -155,7 +155,18 @@ export class SessionReferenceResolver extends TypertRemoteService {
       const references: SessionReferenceInput[] = []
       const content = message.content.map((block): ContentBlock => {
         if (block.type !== 'text') return block
-        const parsed = parseSessionReferenceText(block.text)
+        let parsed: ParsedSessionReferenceText
+        try {
+          parsed = parseSessionReferenceText(block.text)
+        } catch (error: unknown) {
+          /**
+           * A malformed scheme mention is user input, not a plugin fault: keep the
+           * block verbatim and carry on. Aborting here would reject the whole turn,
+           * leaving no way to resend or correct the message.
+           */
+          this.ctx.logger?.warn?.(`session reference ignored in direct message: ${String(error)}`)
+          return block
+        }
         references.push(...parsed.references)
         return { type: 'text', text: parsed.text }
       })
