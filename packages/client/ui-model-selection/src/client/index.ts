@@ -35,6 +35,8 @@ export type { ModelDirectoryState } from './directory.ts'
 export { ModelDirectoryResolver } from './service.ts'
 export type { ModelLabelOwner, ModelSelectInjected } from './slots.ts'
 export type { ModelKey } from './locales.ts'
+export { providerQualifiers } from './provider-label.ts'
+export type { QualifiedProviderGroup } from './provider-label.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
