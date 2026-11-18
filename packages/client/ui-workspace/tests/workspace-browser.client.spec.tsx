@@ -489,7 +489,8 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getByText('分组方式')).toBeTruthy() // the menu heading label
     expect(screen.getAllByRole('separator')).toHaveLength(2)
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      '按工作区', '按工作区树', '单列表', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
+      // Multi-root patch: the group-ordering choice trails the Group by section.
+      '按工作区', '按工作区树', '单列表', '按最近活动排序', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
     ])
     expect(screen.getByRole('menuitem', { name: '按工作区' }).querySelector('svg')).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: '手动排序' }).querySelector('svg')).toBeTruthy()
@@ -513,6 +514,41 @@ describe('WorkspaceBrowser', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(b.store.getSnapshot().groupBy).toBe('workspace')
+  })
+
+  it('orders groups by their newest Session when Group by is set to 按最近活动排序', () => {
+    localStorage.clear()
+    const b = mount({
+      useSessions: hook(sessionState([summary('a-new', 10), summary('b-new', 300), summary('c-new', 20)])),
+      useWorkspaces: hook(workspaceState([
+        workspace('alpha', ['a-new']), workspace('beta', ['b-new']), workspace('gamma', ['c-new']),
+      ])),
+    })
+    const headers = () => screen.getAllByRole('treeitem')
+      .filter(row => row.getAttribute('aria-expanded') !== null)
+      .map(row => row.textContent ?? '')
+    // Registry order until the option is picked.
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['alpha', 'beta', 'gamma'])
+
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '按最近活动排序' }))
+    expect(b.store.getSnapshot().groupsByActive).toBe(true)
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['beta', 'gamma', 'alpha'])
+
+    // A flatter workspace rises without any drag write touching the registry order.
+    rerender(b, { useSessions: hook(sessionState([summary('a-new', 500), summary('b-new', 300), summary('c-new', 20)])) })
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['alpha', 'beta', 'gamma'])
+    expect(b.store.getSnapshot().sessionOrderByAccount).toEqual({})
+
+    // Picking a grouping choice swaps the view and leaves the ordering choice as it is.
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
+    expect(b.store.getSnapshot().groupBy).toBe('flat')
+    expect(b.store.getSnapshot().groupsByActive).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '按工作区' }))
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['alpha', 'beta', 'gamma'])
+    b.view.unmount()
   })
 
   it('picking 全部对话（显示已归档） keeps existing rows and reveals archived ones in place', () => {

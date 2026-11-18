@@ -24,6 +24,8 @@ export const zh = {
   'groupBy.workspace': '按工作区',
   'groupBy.workspaceTree': '按工作区树',
   'groupBy.flat': '单列表',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': '按最近活动排序',
   'orderBy.label': '排序方式',
   'orderBy.manual': '手动排序',
   'orderBy.updated': '最近更新',
@@ -175,6 +177,8 @@ export const en = {
   'groupBy.workspace': 'WorkSpace',
   'groupBy.workspaceTree': 'Workspace Tree',
   'groupBy.flat': 'In one list',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': 'Sort by recent activity',
   'orderBy.label': 'Order by',
   'orderBy.manual': 'Manual',
   'orderBy.updated': 'Last updated',
@@ -323,6 +327,8 @@ export const ja = {
   'groupBy.workspace': 'ワークスペース',
   'groupBy.workspaceTree': 'ワークスペースツリー',
   'groupBy.flat': '1つのリスト',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': '最近の活動順に並べる',
   'orderBy.label': '並び順',
   'orderBy.manual': '手動',
   'orderBy.updated': '最終更新',
@@ -471,6 +477,8 @@ export const es = {
   'groupBy.workspace': 'Espacio de trabajo',
   'groupBy.workspaceTree': 'Árbol del espacio de trabajo',
   'groupBy.flat': 'en una lista',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': 'Ordenar por actividad reciente',
   'orderBy.label': 'Ordenar por',
   'orderBy.manual': 'manuales',
   'orderBy.updated': 'Última actualización',
@@ -619,6 +627,8 @@ export const fr = {
   'groupBy.workspace': 'Espace de travail',
   'groupBy.workspaceTree': "Arborescence de l'espace de travail",
   'groupBy.flat': 'Dans une liste',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': 'Trier par activité récente',
   'orderBy.label': 'Commander par',
   'orderBy.manual': 'Manuel',
   'orderBy.updated': 'Dernière mise à jour',
@@ -767,6 +777,8 @@ export const de = {
   'groupBy.workspace': 'WorkSpace',
   'groupBy.workspaceTree': 'Arbeitsbereichsbaum',
   'groupBy.flat': 'In einer Liste',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': 'Nach letzter Aktivität sortieren',
   'orderBy.label': 'Bestellen nach',
   'orderBy.manual': 'Handbuch',
   'orderBy.updated': 'Zuletzt aktualisiert',
@@ -915,6 +927,8 @@ export const ru = {
   'groupBy.workspace': 'Рабочее пространство',
   'groupBy.workspaceTree': 'Дерево рабочей области',
   'groupBy.flat': 'В одном списке',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': 'Сортировать по недавней активности',
   'orderBy.label': 'Заказать по',
   'orderBy.manual': 'Руководство',
   'orderBy.updated': 'Последнее обновление',
@@ -1063,6 +1077,8 @@ export const pt = {
   'groupBy.workspace': 'Espaço de trabalho',
   'groupBy.workspaceTree': 'Árvore do espaço de trabalho',
   'groupBy.flat': 'Em uma lista',
+  // Multi-root patch: group ordering option.
+  'groupBy.activeWorkspaces': 'Ordenar por atividade recente',
   'orderBy.label': 'Encomendar por',
   'orderBy.manual': 'Manuais',
   'orderBy.updated': 'Última atualização',

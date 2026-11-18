@@ -20,7 +20,7 @@ import { WorkspaceDialogs } from './WorkspaceDialogs.tsx'
 import {
   AnimatedRows, Button, HoverCardGroup, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
   IconChevronsUpDownOutlineRegular, IconClockOutlineRegular, IconCloseFillRegular,
-  IconFlatListOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular, IconProjectAddOutlineRegular,
+  IconFlatListOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular, IconGaugeOutlineRegular, IconProjectAddOutlineRegular,
   IconQueueOutlineRegular, IconSearchOutlineRegular, IconSlidersTwoOutlineRegular,
   IconWorkspaceTreeOutlineRegular, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -139,11 +139,18 @@ function useNativeDragAcceptance(active: boolean): void {
 }
 
 /** Grouping, ordering, and archived-filter menu; own open state so it resets with the wide chrome. */
-function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrderPick, onArchivedFilterPick, t }: {
+function ViewOptionsMenu({
+  groupBy, groupsByActive, orderBy, archivedFilter,
+  onGroupPick, onOrderPick, onGroupOrderPick, onArchivedFilterPick, t,
+}: {
   groupBy: SessionGroupBy
   orderBy: SessionOrderBy
   archivedFilter: ArchivedFilter
   onGroupPick: (mode: SessionGroupBy) => void
+  /** Multi-root patch: whether groups sort by newest Session instead of remaining (created) order. */
+  groupsByActive: boolean
+  /** Switch group ordering; entering 'active' leaves the flat list for grouped view. */
+  onGroupOrderPick: (mode: 'created' | 'active') => void
   onOrderPick: (mode: SessionOrderBy) => void
   onArchivedFilterPick: (filter: ArchivedFilter) => void
   t: WorkspaceBrowserProps['t']
@@ -158,6 +165,10 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
         { id: 'workspace', label: t('groupBy.workspace'), icon: <IconFolderCloseRegular /> },
         { id: 'workspace-tree', label: t('groupBy.workspaceTree'), icon: <IconWorkspaceTreeOutlineRegular /> },
         { id: 'flat', label: t('groupBy.flat'), icon: <IconFlatListOutlineRegular /> },
+        // Multi-root patch: order groups by their newest Session.
+        ...(groupBy === 'flat'
+          ? []
+          : [{ id: 'active-workspaces', label: t('groupBy.activeWorkspaces'), icon: <IconGaugeOutlineRegular /> }]),
         { type: 'separator' as const, id: 'order-by-separator' },
         { type: 'label' as const, id: 'order-by', text: t('orderBy.label') },
         { id: 'manual', label: t('orderBy.manual'), icon: <IconChevronsUpDownOutlineRegular /> },
@@ -172,10 +183,13 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
         groupBy,
         orderBy,
         { default: 'hide-archived', show: 'show-archived', only: 'only-archived' }[archivedFilter],
+        ...(groupBy === 'flat' ? [] : [groupsByActive ? 'active-workspaces' : 'created-workspaces']),
       ]}
       onSelect={(id) => {
         if (id === 'workspace' || id === 'workspace-tree' || id === 'flat') onGroupPick(id)
         else if (id === 'manual' || id === 'updated') onOrderPick(id)
+        else if (id === 'active-workspaces') onGroupOrderPick('active')
+        else if (id === 'created-workspaces') onGroupOrderPick('created')
         else if (id === 'hide-archived') onArchivedFilterPick('default')
         else if (id === 'show-archived') onArchivedFilterPick('show')
         else if (id === 'only-archived') onArchivedFilterPick('only')
@@ -965,6 +979,7 @@ export function WorkspaceBrowser({
   // Persisted view blobs written before the archived filter existed rehydrate
   // without the field; they read as the default hide-archived view.
   const archivedFilter = useStore(s => s.archivedFilter ?? 'default')
+  const groupsByActive = useStore(s => s.groupsByActive ?? false)
   const groupExpansion = useStore(s => s.groupExpansion)
   const sessionOrderByAccount = useStore(s => s.sessionOrderByAccount)
   // Archived sessions are not openable: the row stays visible under the
@@ -1009,6 +1024,23 @@ export function WorkspaceBrowser({
       ),
     }
   }), [currentBlank, list.byId, orderBy, orderState, sessionOrderByAccount, workspaces])
+  // Multi-root patch: "group by active" reorders only what is rendered; the
+  // registry display order (and the workspace drag that writes it) is untouched.
+  // Array.prototype.sort is stable, so ties keep registry order.
+  const orderedGroups = useMemo(() => {
+    if (!groupsByActive) return orderedWorkspaces
+    const archived = new Set(archivedSessionIds)
+    const newestOf = (memberIds: readonly SessionId[]): number => {
+      let latest = Number.NEGATIVE_INFINITY
+      for (const id of memberIds) {
+        const summary = list.byId[id]
+        if (summary === undefined || summary.blank || archived.has(id)) continue
+        latest = Math.max(latest, summary.updatedAt)
+      }
+      return latest
+    }
+    return [...orderedWorkspaces].sort((a, b) => newestOf(b.sessionIds) - newestOf(a.sessionIds))
+  }, [archivedSessionIds, groupsByActive, list.byId, orderedWorkspaces])
   const orderedUngroupedSessionIds = useMemo(() => {
     const baseOrder = orderBy === 'updated'
       ? orderByRecency(ungroupedMemberIds, list.byId)
@@ -1449,10 +1481,15 @@ export function WorkspaceBrowser({
           {wide && (
             <ViewOptionsMenu
               groupBy={groupBy}
+              groupsByActive={groupsByActive}
               orderBy={orderBy}
               archivedFilter={archivedFilter}
               onGroupPick={actions.setGroupBy}
               onOrderPick={(mode) => { actions.setOrderBy(mode, activeSessionOrders) }}
+              onGroupOrderPick={(mode) => {
+                if (mode === 'active') actions.setGroupBy('workspace')
+                actions.setGroupsByActive(mode === 'active')
+              }}
               onArchivedFilterPick={actions.setArchivedFilter}
               t={t}
             />
@@ -1583,7 +1620,7 @@ export function WorkspaceBrowser({
                 openSessionMenu={openSessionMenu} useContextMenu={useContextMenu}
                 openWorkspaceMenu={openWorkspaceMenu}
                 useContextMenuTarget={useContextMenuTarget}
-                workspaces={orderedWorkspaces}
+                workspaces={orderedGroups}
                 ungroupedSessionIds={orderedUngroupedSessionIds}
                 workspaceReady={workspaceReady}
                 nestWorkspaces={groupBy === 'workspace-tree'}

@@ -28,6 +28,8 @@ type WorkspaceViewState = {
   sessionOrderByAccount: Record<string, string[]>
   /** Archived-row visibility; omitted in pre-filter v5 snapshots and read as 'default'. */
   archivedFilter?: ArchivedFilter
+  /** Multi-root patch: sort groups by their newest Session; omitted (false) keeps registry order. */
+  groupsByActive?: boolean
 }
 
 type SessionOrderSource = {
@@ -66,6 +68,8 @@ type WorkspaceViewActions = {
     source: SessionOrderSource,
   ) => void
   setArchivedFilter: (draft: WorkspaceViewState, filter: ArchivedFilter) => void
+  /** Multi-root patch: group ordering choice. */
+  setGroupsByActive: (draft: WorkspaceViewState, active: boolean) => void
 }
 
 /** Copy read-only projections into the persisted mutable store representation. */
@@ -87,6 +91,7 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
       groupExpansion: {},
       sessionOrderByAccount: {},
       archivedFilter: 'default',
+      groupsByActive: false,
     }),
     persist: 'dsh.workspace.view.v5',
     actions: {
@@ -125,6 +130,7 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
         }))
       },
       setArchivedFilter: (d, filter: ArchivedFilter) => { d.archivedFilter = filter },
+      setGroupsByActive: (d, active) => { d.groupsByActive = active },
     },
   })
 }
