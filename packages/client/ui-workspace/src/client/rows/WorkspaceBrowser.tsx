@@ -165,10 +165,14 @@ function ViewOptionsMenu({
         { id: 'workspace', label: t('groupBy.workspace'), icon: <IconFolderCloseRegular /> },
         { id: 'workspace-tree', label: t('groupBy.workspaceTree'), icon: <IconWorkspaceTreeOutlineRegular /> },
         { id: 'flat', label: t('groupBy.flat'), icon: <IconFlatListOutlineRegular /> },
-        // Multi-root patch: order groups by their newest Session.
+        // Multi-root patch: two exclusive rows for the Workspace group order,
+        // so the default order is a visible, clickable choice again.
         ...(groupBy === 'flat'
           ? []
-          : [{ id: 'active-workspaces', label: t('groupBy.activeWorkspaces'), icon: <IconGaugeOutlineRegular /> }]),
+          : [
+            { id: 'active-workspaces', label: t('groupBy.activeWorkspaces'), icon: <IconGaugeOutlineRegular /> },
+            { id: 'workspace-order', label: t('groupBy.workspaceOrder'), icon: <IconFolderCloseRegular /> },
+          ]),
         { type: 'separator' as const, id: 'order-by-separator' },
         { type: 'label' as const, id: 'order-by', text: t('orderBy.label') },
         { id: 'manual', label: t('orderBy.manual'), icon: <IconChevronsUpDownOutlineRegular /> },
@@ -183,13 +187,13 @@ function ViewOptionsMenu({
         groupBy,
         orderBy,
         { default: 'hide-archived', show: 'show-archived', only: 'only-archived' }[archivedFilter],
-        ...(groupBy === 'flat' ? [] : [groupsByActive ? 'active-workspaces' : 'created-workspaces']),
+        ...(groupBy === 'flat' ? [] : [groupsByActive ? 'active-workspaces' : 'workspace-order']),
       ]}
       onSelect={(id) => {
         if (id === 'workspace' || id === 'workspace-tree' || id === 'flat') onGroupPick(id)
         else if (id === 'manual' || id === 'updated') onOrderPick(id)
         else if (id === 'active-workspaces') onGroupOrderPick('active')
-        else if (id === 'created-workspaces') onGroupOrderPick('created')
+        else if (id === 'workspace-order') onGroupOrderPick('created')
         else if (id === 'hide-archived') onArchivedFilterPick('default')
         else if (id === 'show-archived') onArchivedFilterPick('show')
         else if (id === 'only-archived') onArchivedFilterPick('only')
@@ -1030,6 +1034,8 @@ export function WorkspaceBrowser({
   const orderedGroups = useMemo(() => {
     if (!groupsByActive) return orderedWorkspaces
     const archived = new Set(archivedSessionIds)
+    // The trailing blank holds the latest write timestamp of its Workspace, so
+    // it must not decide the order: only Sessions with content count.
     const newestOf = (memberIds: readonly SessionId[]): number => {
       let latest = Number.NEGATIVE_INFINITY
       for (const id of memberIds) {

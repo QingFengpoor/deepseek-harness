@@ -26,6 +26,7 @@ export const zh = {
   'groupBy.flat': '单列表',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': '按最近活动排序',
+  'groupBy.workspaceOrder': '按工作区顺序',
   'orderBy.label': '排序方式',
   'orderBy.manual': '手动排序',
   'orderBy.updated': '最近更新',
@@ -179,6 +180,7 @@ export const en = {
   'groupBy.flat': 'In one list',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': 'Sort by recent activity',
+  'groupBy.workspaceOrder': 'Workspace order',
   'orderBy.label': 'Order by',
   'orderBy.manual': 'Manual',
   'orderBy.updated': 'Last updated',
@@ -329,6 +331,7 @@ export const ja = {
   'groupBy.flat': '1つのリスト',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': '最近の活動順に並べる',
+  'groupBy.workspaceOrder': 'ワークスペース順',
   'orderBy.label': '並び順',
   'orderBy.manual': '手動',
   'orderBy.updated': '最終更新',
@@ -479,6 +482,7 @@ export const es = {
   'groupBy.flat': 'en una lista',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': 'Ordenar por actividad reciente',
+  'groupBy.workspaceOrder': 'Orden del espacio de trabajo',
   'orderBy.label': 'Ordenar por',
   'orderBy.manual': 'manuales',
   'orderBy.updated': 'Última actualización',
@@ -629,6 +633,7 @@ export const fr = {
   'groupBy.flat': 'Dans une liste',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': 'Trier par activité récente',
+  'groupBy.workspaceOrder': 'Ordre de l’espace de travail',
   'orderBy.label': 'Commander par',
   'orderBy.manual': 'Manuel',
   'orderBy.updated': 'Dernière mise à jour',
@@ -779,6 +784,7 @@ export const de = {
   'groupBy.flat': 'In einer Liste',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': 'Nach letzter Aktivität sortieren',
+  'groupBy.workspaceOrder': 'Reihenfolge der Arbeitsbereiche',
   'orderBy.label': 'Bestellen nach',
   'orderBy.manual': 'Handbuch',
   'orderBy.updated': 'Zuletzt aktualisiert',
@@ -929,6 +935,7 @@ export const ru = {
   'groupBy.flat': 'В одном списке',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': 'Сортировать по недавней активности',
+  'groupBy.workspaceOrder': 'Порядок рабочих областей',
   'orderBy.label': 'Заказать по',
   'orderBy.manual': 'Руководство',
   'orderBy.updated': 'Последнее обновление',
@@ -1079,6 +1086,7 @@ export const pt = {
   'groupBy.flat': 'Em uma lista',
   // Multi-root patch: group ordering option.
   'groupBy.activeWorkspaces': 'Ordenar por atividade recente',
+  'groupBy.workspaceOrder': 'Ordem do espaço de trabalho',
   'orderBy.label': 'Encomendar por',
   'orderBy.manual': 'Manuais',
   'orderBy.updated': 'Última atualização',

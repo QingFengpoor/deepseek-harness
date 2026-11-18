@@ -489,8 +489,8 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getByText('分组方式')).toBeTruthy() // the menu heading label
     expect(screen.getAllByRole('separator')).toHaveLength(2)
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      // Multi-root patch: the group-ordering choice trails the Group by section.
-      '按工作区', '按工作区树', '单列表', '按最近活动排序', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
+      // Multi-root patch: two exclusive Workspace-order rows close the Group by section.
+      '按工作区', '按工作区树', '单列表', '按最近活动排序', '按工作区顺序', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
     ])
     expect(screen.getByRole('menuitem', { name: '按工作区' }).querySelector('svg')).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: '手动排序' }).querySelector('svg')).toBeTruthy()
@@ -549,6 +549,58 @@ describe('WorkspaceBrowser', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '按工作区' }))
     expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['alpha', 'beta', 'gamma'])
     b.view.unmount()
+  })
+
+  it('lets 按最近活动排序 be turned off again through 按工作区顺序', () => {
+    localStorage.clear()
+    const sessions = sessionState([summary('a-new', 10), summary('b-new', 300), summary('c-new', 20)])
+    const workspaces = workspaceState([
+      workspace('alpha', ['a-new']), workspace('beta', ['b-new']), workspace('gamma', ['c-new']),
+    ])
+    const b = mount({ useSessions: hook(sessions), useWorkspaces: hook(workspaces) })
+    const groupNames = () => screen.getAllByRole('treeitem')
+      .filter(row => row.getAttribute('aria-expanded') !== null)
+      .map(row => /^(alpha|beta|gamma)/u.exec(row.textContent ?? '')?.[0])
+
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '按最近活动排序' }))
+    expect(b.store.getSnapshot().groupsByActive).toBe(true)
+    expect(groupNames()).toEqual(['beta', 'gamma', 'alpha'])
+
+    // Every option row keeps a check marker: the selected order row shows it,
+    // and the other row is still clickable (this was the "cannot turn it off" bug).
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    expect(screen.getByRole('menuitem', { name: '按最近活动排序' }).querySelector('svg')).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: '按工作区顺序' }))
+    expect(b.store.getSnapshot().groupsByActive).toBe(false)
+    expect(groupNames()).toEqual(['alpha', 'beta', 'gamma'])
+
+    // The choice survives a remount and the default order stays restorable.
+    b.view.unmount()
+    const restored = mount({ useSessions: hook(sessions), useWorkspaces: hook(workspaces) })
+    expect(restored.store.getSnapshot().groupsByActive).toBe(false)
+    expect(groupNames()).toEqual(['alpha', 'beta', 'gamma'])
+    restored.view.unmount()
+  })
+
+  it('does not let the trailing blank session decide the activity order', () => {
+    localStorage.clear()
+    const preferences = createWorkspaceViewStore().create()
+    preferences.actions.setGroupsByActive(true)
+    mount({
+      useSessions: hook(sessionState([
+        // The blank is the most recently written member of gamma, but it carries
+        // no content, so gamma must not lead the list.
+        summary('a-new', 10), summary('b-new', 300), summary('blank-g', 900, { blank: true }),
+      ], { main: sid('blank-g') })),
+      useWorkspaces: hook(workspaceState([
+        workspace('alpha', ['a-new']), workspace('beta', ['b-new']), workspace('gamma', ['blank-g']),
+      ])),
+    })
+    const names = screen.getAllByRole('treeitem')
+      .filter(row => row.getAttribute('aria-expanded') !== null)
+      .map(row => /^(alpha|beta|gamma)/u.exec(row.textContent ?? '')?.[0])
+    expect(names).toEqual(['beta', 'alpha', 'gamma'])
   })
 
   it('picking 全部对话（显示已归档） keeps existing rows and reveals archived ones in place', () => {
