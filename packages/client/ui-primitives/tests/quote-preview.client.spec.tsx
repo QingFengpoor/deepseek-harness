@@ -22,9 +22,47 @@ describe('QuotePreview', () => {
     expect(icon?.getAttribute('width')).toBe('16')
     expect(icon?.getAttribute('height')).toBe('16')
     const paths = [...container.querySelectorAll('svg path')]
-    expect(paths).toHaveLength(2)
-    expect(paths.map(path => path.getAttribute('stroke'))).toEqual([null, null])
-    expect(paths.map(path => path.getAttribute('fill'))).toEqual(['currentColor', 'currentColor'])
+    expect(paths).toHaveLength(4)
+    expect(paths.map(path => path.getAttribute('stroke'))).toEqual([null, null, null, null])
+    expect(paths.map(path => path.getAttribute('fill'))).toEqual(['currentColor', 'currentColor', 'currentColor', 'currentColor'])
+  })
+
+  it('brackets the excerpt with an opening and a closing mark', () => {
+    const { container } = render(<QuotePreview text="paired text" />)
+    const quote = container.querySelector('[data-quote-preview]')!
+    const marks = [...quote.querySelectorAll('[data-quote-mark]')]
+    expect(marks.map(mark => mark.getAttribute('data-quote-mark'))).toEqual(['opening', 'closing'])
+    const [opening, closing] = marks.map(mark => mark.querySelector('svg g')!.getAttribute('transform'))
+    // The closing mark turns the same artwork a half turn about its own centre.
+    expect(opening).toBe('translate(6.8 2.4)')
+    expect(closing).toBe('translate(6.8 2.4) rotate(180 4 3.625)')
+    expect(opening).not.toBe(closing)
+    for (const mark of marks) {
+      expect(mark.getAttribute('aria-hidden')).toBe('true')
+      expect(mark.querySelector('svg path')?.getAttribute('fill')).toBe('currentColor')
+    }
+    // The excerpt stays the only element between the two marks.
+    const source = quote.querySelector('[data-quote-preview-text]')!
+    expect(marks[0]!.nextElementSibling).toBe(source)
+    expect(source.nextElementSibling).toBe(marks[1])
+    expect(container.querySelector('button')).toBeNull()
+  })
+
+  it('keeps both marks and adds an independent removal control for editable drafts', () => {
+    const onRemove = vi.fn()
+    const { container } = render(<QuotePreview text="draft text" removal={{ label: 'Remove quote', onRemove }} />)
+    const quote = container.querySelector('[data-quote-preview]')!
+    expect([...quote.querySelectorAll('[data-quote-mark]')].map(mark => mark.getAttribute('data-quote-mark')))
+      .toEqual(['opening', 'closing'])
+    const button = screen.getByRole('button', { name: 'Remove quote' })
+    // The removal control is its own slot after the closing mark and never carries the quote glyph.
+    expect(quote.lastElementChild).toBe(button)
+    expect(button.querySelector('[data-quote-mark]')).toBeNull()
+    // The control paints the shared close glyph instead of borrowing the quote mark.
+    const icons = [...button.querySelectorAll('svg')]
+    expect(icons).toHaveLength(1)
+    expect(icons[0]!.querySelector('use')?.getAttribute('href')).toContain('close-outline')
+    expect(icons[0]!.querySelector('path')).toBeNull()
   })
 
   it('renders the same inert preview without a removal action', () => {
