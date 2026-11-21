@@ -35,7 +35,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-function persistSelection(selection: {
+export function persistSelection(selection: {
   readonly sessionId?: SessionId
   readonly subagentAddress?: SubagentAddress
 }): Map<string, string> {
@@ -142,6 +142,7 @@ class FakeSessions implements ISessions {
   readonly fork = vi.fn<ISessions['fork']>(async () => sid('forked'))
   readonly retained: RetainedSession[] = []
   readonly refreshProjections = vi.fn<ISessions['refreshProjections']>(() => Promise.resolve())
+  readonly refresh = vi.fn<ISessions['refresh']>(() => Promise.resolve())
   readonly retain = vi.fn<ISessions['retain']>((target) => {
     const release = vi.fn<() => void>()
     const sessionId = typeof target === 'string' ? target : target.childSessionId
@@ -163,7 +164,6 @@ class FakeSessions implements ISessions {
   declare readonly using: ISessions['using']
   declare readonly retainInfo: ISessions['retainInfo']
   declare readonly searchResultLimit: ISessions['searchResultLimit']
-  declare readonly refresh: ISessions['refresh']
   declare readonly search: ISessions['search']
   declare readonly scope: ISessions['scope']
   declare readonly scopeOf: ISessions['scopeOf']
@@ -291,7 +291,7 @@ interface BenchOptions {
   readonly configureSessions?: (sessions: FakeSessions) => void
 }
 
-function bench(options: BenchOptions = {}) {
+export function bench(options: BenchOptions = {}) {
   const ctx = new Context()
   contexts.push(ctx)
   const locale = new LocaleRuntime(ctx)

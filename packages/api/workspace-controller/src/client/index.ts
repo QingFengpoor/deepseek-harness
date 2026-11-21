@@ -34,6 +34,11 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** React-free Client Workspace state and commands. */
     workspaces: import('./service.ts').IWorkspaces
+    /**
+     * Replace the Workspace follow generation so the Host re-sends its
+     * complete baseline; used when another surface changed the account.
+     */
+    workspaceReloader?: () => void
   }
 }
 
@@ -53,6 +58,7 @@ export function apply(ctx: Context): void {
     failed: (error) => { model.handleStreamFailure(error) },
   })
   control.start()
+  ctx.provide('workspaceReloader', () => { control.restart() })
   ctx.effect(
     () => async () => { await control.dispose() },
     'workspace-controller.client.control',

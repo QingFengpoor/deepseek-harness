@@ -96,10 +96,18 @@ export interface UiWorkspace {
   startSession(workspaceId?: WorkspaceId, options?: StartSessionOptions): void
   /**
    * Archive a Session and clear it when it is the current selection.
+   * Archiving also supersedes an in-flight restoration, so the archived Session
+   * is never opened again from the saved selection.
    * @param sessionId - Session to archive.
    * @param options - `stopActivity` asks the Host to stop the Session's running work instead of refusing.
    */
   archiveSession(sessionId: SessionId, options?: { readonly stopActivity?: boolean }): Promise<void>
+  /**
+   * Re-read the Session list from the Host and refresh the Workspace account it
+   * joins, so an externally added or removed Session shows up without a reload.
+   * @returns completion after both Host reads; a refusal leaves the last good snapshots in place.
+   */
+  refreshSessionList(): Promise<void>
   /**
    * Unarchive a Session, restoring it to its recorded Workspace position.
    * @param sessionId - Session to unarchive.
@@ -175,6 +183,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     readonly rootPath: string | undefined
     readonly attempt: Promise<SessionId>
   }>()
+  /** Cancels startup selection restoration; a later navigation or a mutation that hides the Session supersedes it. */
+  private readonly restoration = new AbortController()
   private readonly lifetime = new AbortController()
   private readonly selection = createSnapshotStore<MainSelection>(
     {}, { persist: { name: 'dsh.sessions.current' } },
@@ -216,6 +226,17 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     options: Pick<StartSessionOptions, 'agentPreset' | 'rootPath'> = {},
   ): Promise<SessionId> {
     return this.connectBlank(workspaceId, options)
+  }
+
+  /**
+   * Re-read both Host snapshots. The Workspace follow is what promotes a
+   * Session another surface created or archived into the account this browser
+   * lists, so the Session read alone is not enough.
+   * @returns completion after both reads; the first refusal propagates.
+   */
+  async refreshSessionList(): Promise<void> {
+    await this.sessions.refresh()
+    this.ctx.get('workspaceReloader')?.()
   }
 
   /**
@@ -414,7 +435,12 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   async archiveSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
     await this.workspaces.archiveSession(sessionId, options)
+    // The archive set is published before this promise settles, so the saved
+    // selection can still start a restoration that reopens the archived
+    // Session; supersede that restoration before clearing the selection.
+    if (this.restorationNavigation !== undefined) this.restoration.abort()
     if (this.mainReference?.sessionId === sessionId) this.clearMain()
+    if (this.selection.getSnapshot().sessionId === sessionId) this.clearMain()
   }
 
   async unarchiveSession(sessionId: SessionId): Promise<void> {
@@ -505,11 +531,19 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const summary = saved.sessionId === undefined ? undefined : sessions.byId[saved.sessionId]
     const workspace = summary === undefined ? undefined
       : workspaces.items.find(item => item.sessionIds.includes(summary.id))
+    // A saved ordinary Session the archive set hides must not come back: it is
+    // cleared instead, so a stale saved selection cannot defeat an archive.
     if (summary !== undefined && (!summary.blank || workspace === undefined)) {
+      if (workspaces.archivedSessionIds.includes(summary.id)) {
+        this.clearMain()
+        return
+      }
       this.replaceMain(summary.id, this.lifetime.signal, 'preserve')
       return
     }
-    const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
+    const navigation = AbortSignal.any([
+      this.ctx.layout.beginNavigation(), this.lifetime.signal, this.restoration.signal,
+    ])
     this.restorationNavigation = navigation
     let sessionId: SessionId | undefined
     if (summary !== undefined && workspace !== undefined && summary.cwd !== undefined
@@ -554,10 +588,22 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   /** @returns true when an archived current selection was cleared. */
   private clearArchivedCurrent(): boolean {
     const current = this.mainReference?.sessionId
-    if (current === undefined
-      || !this.workspaces.list.getSnapshot().archivedSessionIds.includes(current)) return false
-    this.clearMain()
-    return true
+    const saved = this.selection.getSnapshot().sessionId
+    const archived = this.workspaces.list.getSnapshot().archivedSessionIds
+    if (current !== undefined && archived.includes(current)) {
+      this.clearMain()
+      return true
+    }
+    // The saved selection outlives a cleared one, so an archived ordinary
+    // Session still recorded there is dropped instead of being restored again.
+    // A saved blank stays: restoring a Workspace blank reclaims an ineligible
+    // one by creating its replacement, and `restoreSelection` refuses it.
+    const summary = saved === undefined ? undefined : this.sessions.list.getSnapshot().byId[saved]
+    if (saved !== undefined && summary !== undefined && !summary.blank && archived.includes(saved)) {
+      this.clearMain()
+      return true
+    }
+    return false
   }
 
   private clearMain(): void {
