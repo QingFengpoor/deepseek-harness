@@ -8,11 +8,6 @@ import css from './Toast.module.css'
 const HOLD_MS = 3000
 /** Fade duration. Must agree with the stylesheet's toast-fade duration. */
 const FADE_MS = 1000
-/**
- * Simultaneous banners one stack keeps. The stack renders newest first, so a
- * flood over the cap drops its oldest entries instead of hiding the newest.
- */
-const STACK_LIMIT = 3
 
 /**
  * Props of one banner. Owners that may hold several notices at once render
@@ -126,7 +121,8 @@ export function Toast({
  * every owner that can hold more than one notice presents them here.
  * Entries expire individually: one banner's completion removes only its own
  * entry, and reaching the fade of an older banner never ends a newer one.
- * The stack keeps {@link STACK_LIMIT} entries, dropping the oldest beyond it.
+ * Every entry is shown; the column grows with the queue, so no notice is
+ * dropped for the sake of a bounded seat.
  * @param props.entries - banners in arrival order; each needs a stable `key`.
  * @param props.anchor - optional element whose horizontal center the column
  * follows; omitted, it centers on the viewport.
@@ -150,15 +146,14 @@ export function ToastStack({ entries, anchor }: {
     window.addEventListener('resize', measure)
     return () => { window.removeEventListener('resize', measure) }
   }, [anchor])
-  const shown = entries.slice(Math.max(0, entries.length - STACK_LIMIT))
-  if (shown.length === 0) return null
+  if (entries.length === 0) return null
   return createPortal(
     <div
       className={css.stack}
       data-dsh-toast-stack=""
       style={{ ...left === null ? {} : { left } }}
     >
-      {[...shown].reverse().map(({ key, ...banner }) => (
+      {[...entries].reverse().map(({ key, ...banner }) => (
         <Toast key={key} position="flowed" {...banner} />
       ))}
     </div>,

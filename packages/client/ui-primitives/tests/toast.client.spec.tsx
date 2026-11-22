@@ -153,11 +153,12 @@ describe('Toast', () => {
     }
   })
 
-  it('keeps the newest banners and drops the oldest when the queue overruns the seat', () => {
-    const view = render(<ToastStack entries={['one', 'two', 'three', 'four'].map((text, index) => ({
+  it('shows every queued banner without dropping any, newest first', () => {
+    const texts = ['one', 'two', 'three', 'four', 'five']
+    const view = render(<ToastStack entries={texts.map((text, index) => ({
       key: String(index), text, onDone: vi.fn(),
     }))} />)
-    expect(view.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['four', 'three', 'two'])
+    expect(view.getAllByRole('alert').map(alert => alert.textContent)).toEqual([...texts].reverse())
   })
 
   it('renders without an icon and cancels its timer on unmount', () => {
