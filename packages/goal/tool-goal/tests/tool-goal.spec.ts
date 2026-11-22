@@ -664,7 +664,7 @@ describe('goal tool state transitions', () => {
     expect(resultGoal(complete)).toMatchObject({ phase: 'complete', objective: 'edited' })
   })
 
-  it('allows exact goal rounds to complete but not edit or pause', async () => {
+  it('allows exact goal rounds to complete and pause but not edit', async () => {
     const { ctx, root } = await harness()
     const humanTurn = openTurn(root, { kind: 'user' })
     const created = ctx.goals.create(root.agent, { objective: 'round-owned' })
@@ -682,6 +682,41 @@ describe('goal tool state transitions', () => {
       phase: 'complete', revision: 2, roundsStarted: 1,
       objective: 'round-owned', maxGoalRounds: created.maxGoalRounds,
     })
+  })
+
+  it('lets the running goal round pause itself when it needs a human decision', async () => {
+    const { ctx, root } = await harness()
+    const humanTurn = openTurn(root, { kind: 'user' })
+    const created = ctx.goals.create(root.agent, { objective: 'wait for a choice' })
+    closeTurn(root, humanTurn)
+    openTurn(root, { kind: 'goal', goalId: created.id, revision: created.revision, round: 1 })
+
+    const paused = await execute(ctx, 'update_goal', {
+      goal_id: created.id, revision: created.revision, action: 'pause',
+    }, root.agent)
+
+    expect(paused.error).toBeUndefined()
+    expect(resultGoal(paused)).toMatchObject({ phase: 'paused', revision: 2, roundsStarted: 1 })
+    expect(ctx.goals.get(root.agent)).toMatchObject({ phase: 'paused', activation: 'disarmed' })
+  })
+
+  it('refuses a goal round that pauses a stale revision or a foreign goal', async () => {
+    const { ctx, root } = await harness()
+    const humanTurn = openTurn(root, { kind: 'user' })
+    const created = ctx.goals.create(root.agent, { objective: 'guard the round' })
+    closeTurn(root, humanTurn)
+    openTurn(root, { kind: 'goal', goalId: created.id, revision: created.revision, round: 1 })
+
+    const stale = await execute(ctx, 'update_goal', {
+      goal_id: created.id, revision: created.revision + 1, action: 'pause',
+    }, root.agent)
+    expect(stale.error?.info?.code).toBe('GOAL_TOOL_AUTHORITY_REQUIRED')
+
+    const foreign = await execute(ctx, 'update_goal', {
+      goal_id: 'goal-someone-else', revision: created.revision, action: 'pause',
+    }, root.agent)
+    expect(foreign.error?.info?.code).toBe('GOAL_TOOL_AUTHORITY_REQUIRED')
+    expect(ctx.goals.get(root.agent)).toMatchObject({ phase: 'active', roundsStarted: 1 })
   })
 
   it('enforces the configured model self-block lower bound across admitted rounds', async () => {

@@ -5,6 +5,7 @@ import { agentEvents } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
+import * as goalTool from '@deepseek-ai/dsh-tool-goal'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 import { createUserMessage, LlmAdapter, LlmError  } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -92,12 +93,13 @@ afterEach(async () => {
   await Promise.allSettled(contexts.splice(0).map(context => context.fiber.dispose()))
 })
 
-/** Mount a real loop with only its model scripted. */
-async function harness(script: ScriptEntry[]): Promise<Harness> {
+/** Mount a real loop with only its model scripted; `goalTools` loads the goal tools too. */
+async function harness(script: ScriptEntry[], goalTools = false): Promise<Harness> {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(GoalService)
+  if (goalTools) await ctx.plugin(goalTool)
   const driver = await ctx.plugin(goalSession)
   await ctx.plugin(AgentLoop, { agents: [] })
   const adapter = new ScriptedAdapter(script)
@@ -258,6 +260,44 @@ describe('same-session goal driving', () => {
 
     expect(goal).toMatchObject({ roundsStarted: 1, activation: 'disarmed' })
     expect(test.adapter.requests).toHaveLength(1)
+  })
+
+  it('stops automatic continuation when the running round pauses the goal itself', async () => {
+    // 复刻真实故障：轮次没有可推进的工作，只"嘴上说等"。按新策略它在结束前
+    // 先 update_goal pause，驱动就不该再排下一轮。
+    const subject: { agent: Agent | undefined } = { agent: undefined }
+    const test = await harness([() => {
+      const goal = subject.agent === undefined ? undefined : test.ctx.goals.get(subject.agent)
+      if (goal === undefined) throw new Error('goal must exist before the round')
+      return [
+        { type: 'block-start', index: 0, blockType: 'tool-call' },
+        {
+          type: 'block-end',
+          index: 0,
+          block: {
+            type: 'tool-call',
+            id: 'self-pause' as never,
+            name: 'update_goal',
+            arguments: JSON.stringify({ goal_id: goal.id, revision: goal.revision, action: 'pause' }),
+          },
+        },
+        { type: 'finish', reason: { kind: 'tool-calls' } },
+      ]
+    }], true)
+    subject.agent = test.agent
+    test.ctx.goals.create(test.agent, { objective: 'needs a human decision', maxGoalRounds: 16 })
+
+    const goal = await waitForGoal(test.ctx, test.agent, current => current?.phase === 'paused')
+
+    expect(goal).toMatchObject({ phase: 'paused', activation: 'disarmed', roundsStarted: 1 })
+    // 只跑了一轮：第二轮从未被预留。第二轮若被预留，它会再发一次 <goal_round>。
+    const goalRounds: number[] = []
+    for (const event of test.agent.session.snapshotEvents()) {
+      if (event.type === 'user/message' && event.data.source.kind === 'goal' && event.data.source.round > 0) {
+        goalRounds.push(event.data.source.round)
+      }
+    }
+    expect(goalRounds).toEqual([1])
   })
 
   it('maps a downstream step rejection to blocked without entering the round', async () => {

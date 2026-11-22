@@ -2,7 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { GoalView } from '@deepseek-ai/dsh-goal'
+import type { GoalRef, GoalView } from '@deepseek-ai/dsh-goal'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -99,6 +99,26 @@ function isMatchingGoalRound(execution: GoalToolExecution, goal: GoalView): bool
 export function requireDirectHuman(ctx: Context, execution: GoalToolExecution): void {
   if (hasDirectHumanInput(ctx, execution)) return
   reject('this goal operation requires a direct human turn on a top-level agent')
+}
+
+/**
+ * Resolve pause authority from a direct human turn or the exact automatic round
+ * that is running right now.
+ *
+ * A round that must wait for a decision otherwise has no way to stop: the
+ * driver keeps reserving rounds until the cap. Pausing only this round's own
+ * goal id and revision cannot widen authority any further — the agent may
+ * already complete or block the same goal from here.
+ * @param ctx - Context carrying the live agent graph.
+ * @param execution - Authenticated current tool execution.
+ * @param ref - The goal id and revision named by the call.
+ */
+export function pauseAuthority(ctx: Context, execution: GoalToolExecution, ref: GoalRef): void {
+  if (hasDirectHumanInput(ctx, execution)) return
+  const goal = ctx.goals.get(execution.agent)
+  if (goal !== undefined && goal.id === ref.id && goal.revision === ref.revision
+    && isMatchingGoalRound(execution, goal)) return
+  reject('pause requires a direct human turn or the current goal round of this exact goal revision')
 }
 
 /**
