@@ -119,9 +119,21 @@ export function apply(ctx: Context): void {
   const viewHandle = createWorkspaceViewStore()
   const viewInstance = viewHandle.create()
   const viewStore: typeof viewHandle = { ...viewHandle, create: () => viewInstance }
-  const rowToast = createSnapshotStore<RowToastState | null>(null)
+  // Notices queue instead of replacing one another: a burst of row actions
+  // (archive, pin, copy) must leave every failure readable, and each banner
+  // expires on its own hold rather than by the arrival of a later one.
+  const rowToast = createSnapshotStore<RowToastState[]>([])
   let toastSeq = 0
-  const notify = (toast: RowToast): void => { rowToast.set({ ...toast, seq: ++toastSeq }) }
+  const notify = (toast: RowToast): void => {
+    toastSeq += 1
+    rowToast.update((list) => { list.push({ ...toast, seq: toastSeq }) })
+  }
+  const dismissToast = (seq: number): void => {
+    rowToast.update((list) => {
+      const at = list.findIndex(entry => entry.seq === seq)
+      if (at !== -1) list.splice(at, 1)
+    })
+  }
   const uiWorkspace = new UiWorkspaceService(
     ctx, ctx.remote.directoryPicker, workspaces, sessions, viewInstance.actions, notify,
   )
@@ -257,10 +269,11 @@ export function apply(ctx: Context): void {
       openSession(sessionId)
     },
   }
-  registerToasts(ctx, viewStore, toastActions)
-  const rowToastInjected = (): Pick<RowToastInjected, 'hooks' | 'dismissToast'> => ({
+  const displays = registerToasts(ctx, viewStore, toastActions)
+  const rowToastInjected = (): Pick<RowToastInjected, 'hooks' | 'dismissToast' | 'displays'> => ({
     hooks: { toast: rowToast },
-    dismissToast: () => { rowToast.set(null) },
+    dismissToast,
+    displays,
   })
   const workspaceActionRequest = createSnapshotStore<WorkspaceActionRequest | null>(null)
   const requestWorkspaceAction = (workspaceId: WorkspaceId, displayTitle: string, action: 'rename' | 'delete' | 'roots'): void => {
@@ -387,8 +400,7 @@ export function apply(ctx: Context): void {
       name: 'shell.overlay', id: 'workspace.session-archive', locale: NS, inject: archiveConfirmInjected,
     }, SessionArchiveConfirmDialog)
     yield ctx.slots.register({
-      name: 'shell.overlay', id: 'workspace.row-toast', inject: rowToastInjected,
-      children: { 'workspace.toast': { kind: 'keyed', scope: 'root' } },
+      name: 'shell.overlay', id: 'workspace.row-toast', locale: NS, inject: rowToastInjected,
     }, RowActionToast)
   })
   ctx.slots.inject('conversation.hero.workspace', () => ctx.slots.register(

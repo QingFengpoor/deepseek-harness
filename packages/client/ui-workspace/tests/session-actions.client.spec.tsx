@@ -19,8 +19,6 @@ import type { GlobalStandardProps, PropsLocale, PropsRenderSlots, PropsRuntime }
 import { allowAllAccess, bindSnapshotSelector, makeTranslate, SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { registerToasts } from '../src/client/toast/register.ts'
-import { ArchiveToastEntry } from '../src/client/toast/Toast.tsx'
-import type { ArchiveToastEntryProps } from '../src/client/contract/toast.ts'
 import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type {
@@ -427,19 +425,15 @@ function ToastFrame({ renderSlot }: PropsRenderSlots<'shell.overlay'>) {
 }
 
 describe('RowActionToast', () => {
-  it('adds the archive filter action when the display mapping supplies no actions', () => {
-    const instance = createWorkspaceViewStore().create()
-    const dismissToast = vi.fn()
-    const showArchived = vi.fn()
-    const filter = { label: 'Show archived', onClick: showArchived }
-    const renderFactorySlot = vi.fn<ArchiveToastEntryProps['renderFactorySlot']>(() => null)
-    render(<ArchiveToastEntry {...standard} kind="archived" sessionId={ROW.sessionId} seq={1}
-      t={t} useStore={bindSnapshotSelector(instance.store)} actions={instance.actions}
-      dismissToast={dismissToast} renderFactorySlot={renderFactorySlot}
-      display={() => ({ text: 'Archived', tone: 'success' })} filterAction={() => filter} />)
-    expect(renderFactorySlot).toHaveBeenCalledWith('workspace.toast.content', {
-      text: 'Archived', tone: 'success', actions: [filter], seq: 1, onDone: dismissToast,
-    })
+  it('maps the queued notices and settles each by its own seq', async () => {
+    const { notify, dismissToast } = await toastSurface()
+    notify({ kind: 'pinFailed' })
+    notify({ kind: 'sessionIdCopied' })
+    // The column renders the newest notice first; both are present.
+    const alerts = screen.getAllByRole('alert')
+    expect(alerts.map(alert => alert.textContent)).toEqual(['Session ID 已复制', '置顶失败，请稍后重试'])
+    // Nothing settles on its own until a banner reaches its hold.
+    expect(dismissToast).not.toHaveBeenCalled()
   })
 
   /** The notice surface over a test-owned notice source; dismissal clears the notice the way apply does. */
@@ -447,7 +441,7 @@ describe('RowActionToast', () => {
     viewState: { archivedFilter?: 'default' | 'show' | 'only' } = { archivedFilter: 'default' },
     translate = t,
   ) {
-    const toast = createSnapshotStore<RowToastState | null>(null)
+    const toast = createSnapshotStore<RowToastState[]>([])
     const instance = createWorkspaceViewStore().create()
     // A v5 snapshot hydrates without the filter key; mirror it by dropping the
     // fresh store's default rather than writing an explicit undefined.
@@ -455,7 +449,12 @@ describe('RowActionToast', () => {
     if (viewState.archivedFilter === undefined) delete state.archivedFilter
     else state.archivedFilter = viewState.archivedFilter
     const view = createSnapshotStore(state)
-    const dismissToast = vi.fn(() => { toast.set(null) })
+    const dismissToast = vi.fn((seq: number) => {
+      toast.update((list) => {
+        const at = list.findIndex(entry => entry.seq === seq)
+        if (at !== -1) list.splice(at, 1)
+      })
+    })
     const undoArchive = vi.fn()
     const showArchived = vi.fn()
     const openForkSource = vi.fn()
@@ -467,7 +466,7 @@ describe('RowActionToast', () => {
     runtime.ctx.provide('locale', locale)
     runtime.slots.installLocale(locale)
     await runtime.root.declare({ 'shell.overlay': { kind: 'list', scope: 'root' } }, ToastFrame)
-    registerToasts(runtime.ctx, {
+    const displays = registerToasts(runtime.ctx, {
       ...createWorkspaceViewStore(),
       create: () => ({
         ...instance, store: view,
@@ -478,14 +477,16 @@ describe('RowActionToast', () => {
       undoArchive, showArchived, openForkSource,
     })
     runtime.slots.register({
-      name: 'shell.overlay', id: 'workspace.row-toast',
-      children: { 'workspace.toast': { kind: 'keyed', scope: 'root' } },
-      inject: () => ({ hooks: { toast }, dismissToast }),
+      name: 'shell.overlay', id: 'workspace.row-toast', locale: 'workspace',
+      inject: () => ({ hooks: { toast }, dismissToast, displays }),
     }, RowActionToast)
     runtime.renderRoot()
     let seq = 0
     const notify = (notice: RowToast): void => {
-      act(() => { toast.set({ ...notice, seq: ++seq }) })
+      act(() => {
+        seq += 1
+        toast.update((list) => { list.push({ ...notice, seq }) })
+      })
     }
     return { dismissToast, undoArchive, showArchived, openForkSource, notify, locale, view }
   }
@@ -539,45 +540,50 @@ describe('RowActionToast', () => {
   it.each([t, tEn])('reports clipboard success and failure through the global toast', async (translate) => {
     const { notify } = await toastSurface(undefined, translate)
     notify({ kind: 'sessionIdCopied' })
-    expect(screen.getByRole('alert').textContent).toBe(translate('toast.sessionIdCopied'))
+    expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual([translate('toast.sessionIdCopied')])
     notify({ kind: 'sessionIdCopyFailed' })
-    expect(screen.getByRole('alert').textContent).toBe(translate('toast.sessionIdCopyFailed'))
+    // Both notices stay queued: the failure does not displace the success.
+    // Newest first, so the failure leads the column.
+    expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toEqual([
+      translate('toast.sessionIdCopyFailed'), translate('toast.sessionIdCopied'),
+    ])
   })
 
-  it.each([t, tEn])('replaces other notices with plain shortcut fork failures and only keeps the latest', async (translate) => {
+  it.each([t, tEn])('keeps every notice in the queue and expires each on its own hold', async (translate) => {
     const { dismissToast, notify } = await toastSurface(undefined, translate)
+    const archivedText = `${translate('toast.archived')}${translate('toast.archivedUndo')}${translate('toast.archivedOr')}${translate('toast.archivedFilter')}`
+    const texts = (): (string | null)[] => screen.getAllByRole('alert').map(alert => alert.textContent)
     vi.useFakeTimers()
     try {
       notify({ kind: 'archived', sessionId: sid('one') })
       act(() => { vi.advanceTimersByTime(1000) })
       notify({ kind: 'shortcutForkFailed', reason: 'unavailable' })
-      const first = screen.getByRole('alert')
-      expect(first.textContent).toBe(translate('shortcut.noCompletedTurn'))
-      expect(first.querySelector('svg')).toBeNull()
-      expect(first.querySelector('button')).toBeNull()
+      // The newer notice joins the queue instead of replacing the archived
+      // one; the column leads with the newest.
+      expect(texts()).toEqual([translate('shortcut.noCompletedTurn'), archivedText])
+      const plain = screen.getAllByRole('alert')[0]!
+      expect(plain.querySelector('svg')).toBeNull()
+      expect(plain.querySelector('button')).toBeNull()
       act(() => { vi.advanceTimersByTime(3000) })
-      expect(screen.getByRole('alert')).toBe(first)
-      notify({ kind: 'shortcutForkFailed', reason: 'failed' })
-      const retry = screen.getByRole('alert')
-      expect(retry).not.toBe(first)
-      expect(retry.textContent).toBe(translate('shortcut.forkFailed'))
-      expect(retry.querySelector('svg')).toBeNull()
-      act(() => { vi.advanceTimersByTime(3999) })
-      expect(screen.getAllByRole('alert')).toEqual([retry])
-      expect(dismissToast).not.toHaveBeenCalled()
-      act(() => { vi.advanceTimersByTime(1) })
-      expect(dismissToast).toHaveBeenCalledOnce()
-      expect(screen.queryByRole('alert')).toBeNull()
+      expect(texts()).toEqual([translate('shortcut.noCompletedTurn'), archivedText])
 
       notify({ kind: 'shortcutForkFailed', reason: 'failed' })
+      expect(texts()).toEqual([translate('shortcut.forkFailed'), translate('shortcut.noCompletedTurn'), archivedText])
+
+      // Each notice settles on its own deadline — the plain one at t=5000,
+      // the archived one at t=7000, the retry at t=8000 — so the plain notice
+      // goes first even though it is not the oldest. Each takes only itself
+      // down.
       act(() => { vi.advanceTimersByTime(1000) })
-      notify({ kind: 'sessionIdCopied' })
-      const latest = screen.getByRole('alert')
-      expect(latest.textContent).toBe(translate('toast.sessionIdCopied'))
-      act(() => { vi.advanceTimersByTime(3000) })
-      expect(screen.getAllByRole('alert')).toEqual([latest])
-      expect(dismissToast).toHaveBeenCalledOnce()
+      expect(dismissToast).toHaveBeenCalledExactlyOnceWith(2)
+      expect(texts()).toEqual([translate('shortcut.forkFailed'), archivedText])
+
+      act(() => { vi.advanceTimersByTime(2000) })
+      expect(dismissToast).toHaveBeenLastCalledWith(1)
+      expect(texts()).toEqual([translate('shortcut.forkFailed')])
+
       act(() => { vi.advanceTimersByTime(1000) })
+      expect(dismissToast).toHaveBeenLastCalledWith(3)
       expect(screen.queryByRole('alert')).toBeNull()
     } finally {
       vi.useRealTimers()
@@ -674,18 +680,25 @@ describe('RowActionToast', () => {
     }
   })
 
-  it('the archived notice holds longer than a plain notice, and a repeat restarts its hold', async () => {
+  it('holds each archived notice for its own longer window instead of restarting one shared notice', async () => {
     const { dismissToast, notify } = await toastSurface()
     vi.useFakeTimers()
     try {
       notify({ kind: 'archived', sessionId: sid('one') })
       act(() => { vi.advanceTimersByTime(4000) })
-      expect(screen.getByRole('alert')).toBeTruthy()
+      // Past the plain notice's window, the archived one is still up.
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
       notify({ kind: 'archived', sessionId: sid('two') })
-      act(() => { vi.advanceTimersByTime(6999) })
-      expect(dismissToast).not.toHaveBeenCalled()
-      act(() => { vi.advanceTimersByTime(1) })
+      expect(screen.getAllByRole('alert')).toHaveLength(2)
+      // The first notice keeps its own deadline rather than the repeat
+      // extending it: it settles at t=7000, the second at t=11000.
+      act(() => { vi.advanceTimersByTime(3000) })
+      expect(dismissToast).toHaveBeenCalledExactlyOnceWith(1)
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      act(() => { vi.advanceTimersByTime(3999) })
       expect(dismissToast).toHaveBeenCalledOnce()
+      act(() => { vi.advanceTimersByTime(1) })
+      expect(dismissToast).toHaveBeenLastCalledWith(2)
       expect(screen.queryByRole('alert')).toBeNull()
     } finally {
       vi.useRealTimers()

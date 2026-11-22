@@ -3,6 +3,30 @@
    component's own default. The fade DURATION still has to agree with FADE_MS
    in Toast.tsx, which no owner varies. */
 
+/* One fixed seat per stack: the element that owns the window position, with
+   its banners flowing inside it. Banners that each fixed themselves to the
+   same coordinates would cover one another. */
+.stack {
+  position: fixed;
+  top: 40px;
+  left: 50%;
+  /* Above the 1000 the image lightbox backdrop uses: a failure reported while
+     a preview is open must stay readable. */
+  z-index: 1100;
+  /* Announcements never intercept clicks; the action text below opts back in. */
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  /* A fixed box with `left` set shrink-to-fit against the space RIGHT of
+     `left`, so the column sizes itself to its own banners and centers them
+     with the translate below. */
+  width: max-content;
+  max-width: calc(100vw - 48px);
+  transform: translateX(-50%);
+}
+
 .toast {
   position: fixed;
   top: 40px;
@@ -35,6 +59,25 @@
   animation:
     dsh-toast-in 160ms ease-out,
     dsh-toast-fade 1000ms ease var(--dsh-toast-hold, 3000ms) forwards;
+}
+
+/* Inside a stack the column supplies the fixed seat and the order, so a
+   banner stays in that layout, keeps a column width fixed by the column
+   itself, and lets each banner size to its own text. That replaces the
+   fixed-box translate and the slide-in, which belong to the standalone
+   seat above. */
+.flowed {
+  position: static;
+  top: auto;
+  left: auto;
+  z-index: auto;
+  /* The column is a flex container whose default `stretch` alignment would
+     equalize every banner's width against the widest one; centering and
+     max-content keep each banner at its own text width. */
+  align-self: center;
+  width: max-content;
+  transform: none;
+  animation: dsh-toast-fade 1000ms ease var(--dsh-toast-hold, 3000ms) forwards;
 }
 
 .icon {

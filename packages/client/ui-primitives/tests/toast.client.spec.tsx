@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import { Toast } from '../src/Toast.tsx'
+import { Toast, ToastStack } from '../src/Toast.tsx'
 
 afterEach(cleanup)
 
@@ -106,6 +106,58 @@ describe('Toast', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('lays simultaneous banners out in one column instead of stacking them on the same seat', () => {
+    const view = render(<ToastStack anchor={null} entries={[
+      { key: '1', text: 'first', onDone: vi.fn() },
+      { key: '2', text: 'second', onDone: vi.fn() },
+    ]} />)
+    // One fixed seat owns the window position; each banner flows inside it.
+    const alerts = view.getAllByRole('alert')
+    expect(alerts.map(alert => alert.textContent)).toEqual(['second', 'first'])
+    const seat = alerts[0]!.parentElement!
+    expect(seat.hasAttribute('data-dsh-toast-stack')).toBe(true)
+    for (const alert of alerts) {
+      expect(alert.parentElement).toBe(seat)
+      // A flow-positioned banner keeps its parent's order instead of fixing
+      // itself to the window at the same coordinates as its neighbours.
+      expect(alert.style.top).toBe('')
+      expect(alert.style.left).toBe('')
+    }
+  })
+
+  it('renders nothing while the stack holds no entry', () => {
+    render(<ToastStack entries={[]} />)
+    expect(document.querySelector('[data-dsh-toast-stack]')).toBeNull()
+  })
+
+  it('settles only the banner that reached its own hold', () => {
+    vi.useFakeTimers()
+    try {
+      const firstDone = vi.fn()
+      const secondDone = vi.fn()
+      const view = render(<ToastStack entries={[
+        { key: '1', text: 'first', holdMs: 1000, onDone: firstDone },
+        { key: '2', text: 'second', holdMs: 5000, onDone: secondDone },
+      ]} />)
+      expect(view.getAllByRole('alert')).toHaveLength(2)
+      // The shorter hold ends first and reports only itself.
+      vi.advanceTimersByTime(2000)
+      expect(firstDone).toHaveBeenCalledOnce()
+      expect(secondDone).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(4000)
+      expect(secondDone).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the newest banners and drops the oldest when the queue overruns the seat', () => {
+    const view = render(<ToastStack entries={['one', 'two', 'three', 'four'].map((text, index) => ({
+      key: String(index), text, onDone: vi.fn(),
+    }))} />)
+    expect(view.getAllByRole('alert').map(alert => alert.textContent)).toEqual(['four', 'three', 'two'])
   })
 
   it('renders without an icon and cancels its timer on unmount', () => {
