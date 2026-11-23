@@ -297,6 +297,49 @@ describe('deriveGroups', () => {
     expect(groups[1]!.sessions.map(session => session.id)).toEqual([sid('loose')])
   })
 
+  it('hides Ungrouped Sessions that live in scratch space by default', () => {
+    const sessions = list(
+      summary('scratch', 5, '/tmp/probe'),
+      summary('root', 4, '/tmp'),
+      summary('run', 3, '/home/q/harness/runs/2026-11-19T000031'),
+      summary('kept', 2, '/home/q/project'),
+      summary('lookalike', 1, '/tmpfoo'),
+      summary('relative', 1, 'tmp/x'),
+    )
+    const groups = deriveGroups(
+      sessions, [], noRows, noAttention, view([UNGROUPED_KEY]),
+    )
+    expect(groups[0]!.sessions.map(session => session.id))
+      .toEqual([sid('kept'), sid('lookalike'), sid('relative')])
+  })
+
+  it('keeps scratch Sessions when the setting turns the filter off', () => {
+    const sessions = list(summary('scratch', 5, '/tmp/probe'), summary('kept', 2, '/home/q/project'))
+    const groups = deriveGroups(
+      sessions, [], noRows, noAttention,
+      { expandedGroups: [UNGROUPED_KEY], hideEphemeral: false },
+    )
+    expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('scratch'), sid('kept')])
+  })
+
+  it('never hides an accounted scratch Session behind a Workspace account', () => {
+    const sessions = list(summary('owned', 1, '/tmp/probe'))
+    const owned: WorkspaceView = {
+      ...workspace('scratch-ws', ['owned']), path: '/tmp/probe', paths: ['/tmp/probe'],
+    }
+    const groups = deriveGroups(sessions, [owned], noRows, noAttention, view(['scratch-ws']))
+    expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('owned')])
+  })
+
+  it('honors a custom temp root', () => {
+    const sessions = list(summary('custom', 2, '/var/tmp/x'), summary('plain-tmp', 1, '/tmp/y'))
+    const groups = deriveGroups(
+      sessions, [], noRows, noAttention,
+      { expandedGroups: [UNGROUPED_KEY], tmpdir: '/var/tmp' },
+    )
+    expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('plain-tmp')])
+  })
+
   it('applies stored Ungrouped order and appends new loose Sessions by recency', () => {
     const sessions = list(summary('one', 3), summary('two', 2), summary('new', 4))
     const groups = deriveGroups(

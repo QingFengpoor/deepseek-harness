@@ -115,6 +115,14 @@ export interface TreeView {
   expandedGroups: readonly string[]
   /** Browser-local order for Sessions without a backing Workspace account. */
   ungroupedOrder?: readonly string[]
+  /**
+   * Hide Ungrouped Sessions that live in scratch space ({@link isEphemeralCwd}).
+   * Defaults to on; the setting turns it off so a Session started in the temp
+   * root stays reachable.
+   */
+  hideEphemeral?: boolean
+  /** Absolute platform temp root; defaults to `/tmp`. */
+  tmpdir?: string
 }
 
 interface Group {
@@ -250,6 +258,27 @@ function sessionVisible(
   }
 }
 
+/**
+ * A directory that only ever hosts throwaway Sessions: the platform temp root
+ * itself or anything below it, and one-shot run directories whose final
+ * segment is a timestamp (`.../runs/2026-11-19T000031`). Probing scratch
+ * directories, test fixtures, and scheduled runs all leave Sessions here that
+ * nobody can usefully return to, so the Ungrouped bucket hides them.
+ * @param cwd - absolute Session working directory, or undefined when unknown.
+ * @param tmpdir - absolute platform temp root, without a trailing slash.
+ * @returns true when the directory is scratch space.
+ */
+export function isEphemeralCwd(cwd: string | undefined, tmpdir: string): boolean {
+  if (cwd === undefined || cwd === '') return false
+  if (!cwd.startsWith('/')) return false
+  const root = tmpdir.replace(/\/+$/, '')
+  // Trailing slashes are normalized away so `/tmp/` and `/tmp` agree; the
+  // separator check keeps `/tmpfoo` from matching the `/tmp` root.
+  const norm = cwd.replace(/\/+$/, '')
+  if (norm === root || norm.startsWith(`${root}/`)) return true
+  return /\/runs\/[^/]+$/.test(norm)
+}
+
 /** Registry-global row state consumed by every tree derivation. */
 export interface SessionRowState {
   /** Registry-global pin ids; pinned rows lead their section in the local order. */
@@ -331,8 +360,12 @@ function groupByWorkspace(
   workspaces: readonly WorkspaceView[],
   archived: ReadonlySet<SessionId>,
   archivedFilter: ArchivedFilter,
-  ungroupedOrder: readonly string[] | undefined,
+  view: TreeView,
 ): Group[] {
+  const ungroupedOrder = view.ungroupedOrder
+  const hideEphemeral = view.hideEphemeral ?? true
+  const tmpdir = view.tmpdir ?? '/tmp'
+
   const current = mainSessionId(list)
   const groups: Group[] = []
   const accounted = new Set<SessionId>()
@@ -353,10 +386,13 @@ function groupByWorkspace(
       Date.parse(workspace.createdAt), workspace.title, members,
     ))
   }
+  // Scratch directories are checked after accounting, so a Session that a
+  // Workspace already owns is never hidden however its cwd reads.
   const stray = list.ids
     .map(id => list.byId[id])
     .filter((s): s is SessionSummary =>
-      s !== undefined && !accounted.has(s.id) && sessionVisible(s, current, archived, archivedFilter))
+      s !== undefined && !accounted.has(s.id) && sessionVisible(s, current, archived, archivedFilter)
+      && !(hideEphemeral && isEphemeralCwd(s.cwd, tmpdir)))
   if (stray.length > 0) {
     groups.push(buildGroup(
       UNGROUPED_KEY,
@@ -445,7 +481,7 @@ export function deriveGroups(
     ? undefined
     : owningGroupKey(workspaces, current)
   const groups: GroupNode[] = []
-  for (const g of groupByWorkspace(list, workspaces, archived, rowState.archivedFilter, view.ungroupedOrder)) {
+  for (const g of groupByWorkspace(list, workspaces, archived, rowState.archivedFilter, view)) {
     const expanded = expandedGroups.has(g.key)
     groups.push({
       key: g.key,
