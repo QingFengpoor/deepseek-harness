@@ -32,7 +32,15 @@ describe('quote UserText', () => {
     const view = render(<>{renderText({ text, facts: { skillNames: ['review'] } })}</>)
     expect(view.container.querySelector('[data-quote-preview-text]')?.textContent).toBe('@file.ts /review')
     expect(view.container.querySelector('[data-ref-chip]')).toBeNull()
-    expect(view.container.textContent).toBe('before @file.ts /review after')
+    expect(view.container.textContent).toBe('before\n@file.ts /review after')
+  })
+
+  it('keeps the author paragraph break between quoted answers', () => {
+    const renderText = createUserTextFixture()
+    const text = '> first question\n\nanswer one\n\n> second question\n\nanswer two'
+    const view = render(<>{renderText({ text, facts: {} })}</>)
+    expect(view.container.querySelectorAll('[data-quote-preview]')).toHaveLength(2)
+    expect(view.container.textContent).toBe('first question answer one\nsecond question answer two')
   })
 
   it('keeps nested quote markers literal in the excerpt', () => {
@@ -106,14 +114,15 @@ describe('quote UserText', () => {
         { id: 'quote', start: 8, end: 22, data: { text: 'first\nline' } },
         { id: 'quote', start: 24, end: 32, data: { text: 'second' } },
       ])
-      expect(nodes.filter(node => node.id === 'text' && node.data.display === ' ')).toEqual([
-        { id: 'text', start: 6, end: 8, data: { text: '\n\n', display: ' ' } },
+      expect(nodes.filter(node => node.id === 'text' && node.data.display !== undefined)).toEqual([
+        { id: 'text', start: 6, end: 8, data: { text: '\n\n', display: '\n' } },
         { id: 'text', start: 22, end: 24, data: { text: '\n\n', display: ' ' } },
         { id: 'text', start: 32, end: 34, data: { text: '\n\n', display: ' ' } },
       ])
       expect(nodes.map(node => text.slice(node.start, node.end)).join('')).toBe(text)
       const facts: Readonly<Partial<UserTextFacts>> = {}
       const context = { read: <Key extends keyof UserTextFacts>(key: Key) => facts[key] }
+      expect(quoteRule.match(text, 0, context)).toMatchObject({ id: 'text', start: 6, end: 8, data: { display: '\n' } })
       expect(quoteRule.match(text, 10, context)).toMatchObject({ id: 'text', start: 22, end: 24 })
       expect(quoteRule.match(text, 23, context)).toMatchObject({ id: 'quote', start: 24, end: 32 })
       expect(quoteRule.match(text, 34, context)).toBeUndefined()

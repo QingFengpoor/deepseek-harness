@@ -8,7 +8,7 @@ declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   }
 }
 
-/** Recognize blockquote lines and display adjacent paragraph separators as inline spaces. */
+/** Recognize blockquote lines, keep the author's paragraph break before one, and inline the break after it. */
 export const quoteRule: UserTextRule<'quote'> = {
   id: 'quote',
   order: -10,
@@ -20,7 +20,11 @@ export const quoteRule: UserTextRule<'quote'> = {
           return { id: 'quote', start, end: range.end, data: { text: quoteTextOf(text.slice(start, range.end)) } }
         }
         if (text.slice(start, start + 2) === '\n\n') {
-          return { id: 'text', start, end: start + 2, data: { text: '\n\n', display: ' ' } }
+          // A quote is its own composer paragraph. The break before it is the
+          // author's paragraph boundary and stays a line break; the break after
+          // it only isolates the excerpt from the answer written beside the
+          // quote chip, so it collapses onto the quote's line.
+          return { id: 'text', start, end: start + 2, data: { text: '\n\n', display: start < range.start ? '\n' : ' ' } }
         }
       }
     }
