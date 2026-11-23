@@ -11,7 +11,7 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SessionProjectionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   type ArchivedFilter,
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
+  isEphemeralCwd, deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, visibleSessionIds, workspaceLabel, UNGROUPED_KEY,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
@@ -1025,5 +1025,41 @@ describe('multi-root performance smoke', () => {
     expect(groups[0]?.sessions).toHaveLength(100)
     expect(elapsed).toBeLessThan(500)
     console.log(`perf: deriveGroups 20 roots / 100 sessions = ${elapsed.toFixed(1)}ms`)
+  })
+})
+
+describe('isEphemeralCwd', () => {
+  it.each([
+    ['/tmp', true],
+    ['/tmp/probe', true],
+    ['/tmp/ai-shell/handoff-test', true],
+    ['/tmp/pytest-of-q/project', true],
+    ['/home/q/harness/runs/2026-11-19T000031', true],
+    ['/tmpfoo', false],
+    ['/home/q/project', false],
+    ['/home/q/project/runs', false],
+    ['tmp/x', false],
+    ['', false],
+  ])('%s -> %s', (cwd, want) => {
+    expect(isEphemeralCwd(cwd, '/tmp')).toBe(want)
+  })
+})
+
+describe('real store smoke', () => {
+  it('classifies every current Ungrouped cwd', () => {
+    const paths = [
+      '/tmp', '/tmp/ai-shell/handoff-test', '/tmp/night-release-probe',
+      '/tmp/pytest-of-qizhuo/pytest-49/test_approval_is_single_use_ac0/project-202611196953',
+      '/home/qizhuo/.local/state/dsh-nightly-digest/runs/2026-11-22T222918',
+      '/home/qizhuo/.local/share/agent-knowledge',
+      '/home/qizhuo/Code/dsh-web-desktop',
+      '/home/qizhuo/dsh-ideas/sandbox-context',
+    ]
+    const hidden = paths.filter(p => isEphemeralCwd(p, '/tmp'))
+    expect(hidden).toEqual([
+      '/tmp', '/tmp/ai-shell/handoff-test', '/tmp/night-release-probe',
+      '/tmp/pytest-of-qizhuo/pytest-49/test_approval_is_single_use_ac0/project-202611196953',
+      '/home/qizhuo/.local/state/dsh-nightly-digest/runs/2026-11-22T222918',
+    ])
   })
 })
