@@ -40,7 +40,7 @@
 import type { ContextMenuTarget } from '@deepseek-ai/dsh-client-ui-context-menu/client'
 import type {
   FactoryComponentPropsOf, HostObservable, InjectFace, PropsHooks, PropsLocale, PropsRenderFactories, PropsRenderSlots,
-  PropsRuntime, PropsStore, SlotHookFactory, TranslateNS,
+  PropsRuntime, PropsStore, SlotHookFactory,
 } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pull the owner SlotMap merges into programs that resolve the
 // runtime shares below.
@@ -97,6 +97,12 @@ export interface SessionRowOwnerProps {
   /** Row display title: persisted title, or empty when the Session has none. */
   displayTitle: string
 }
+
+/**
+ * Drag data type a Session row sets to its Session id. The drag allows `copy`, and `move` while the row can be reordered;
+ * a drop target outside the list that accepts the Session sets `dropEffect` to `copy`, which discards the pending reorder.
+ */
+export type SessionDragType = 'application/x-dsh-session'
 
 /** The row menu's open state as its owner holds it: the `useState` pair. */
 export type MenuOpenState = readonly [open: boolean, setOpen: (open: boolean) => void]
@@ -358,6 +364,7 @@ export type SessionRowActionProps<Injected extends object = object> =
 export type RowToast =
   | { kind: 'archived'; sessionId: SessionId; message?: string; tone?: 'success' | 'warning' }
   | { kind: 'stoppedAndArchived'; sessionId: SessionId; message?: string; tone?: 'success' | 'warning' }
+  | { kind: 'readingFailed' }
   | { kind: 'sessionIdCopied' }
   | { kind: 'sessionIdCopyFailed' }
   | { kind: 'pinFailed' }
@@ -373,11 +380,7 @@ export type RowToast =
    */
   | { kind: 'createFailed'; message: string }
 
-/**
- * One queued notice; `seq` identifies the occurrence so its own completion
- * removes exactly this entry and a repeat is never mistaken for the earlier
- * one. `seq` is unique for the life of the page, never a per-list index.
- */
+/** The notice on display; `seq` keys remounts so a repeated notice restarts its hold. */
 export type RowToastState = RowToast & { seq: number }
 
 /**
@@ -492,41 +495,14 @@ export interface SessionRenameDialogInjected {
   renameSession: (sessionId: SessionId, title: string) => Promise<void>
 }
 
-/** Plain display fields one notice kind produces; the overlay feeds them to the shared stack. */
-export interface ToastDisplay {
-  text: string
-  tone: 'plain' | 'warning' | 'success'
-  holdMs?: number
-  actions?: readonly { label: string; prefix?: string; onClick: () => void }[]
-}
-/**
- * One kind's display mapping. The overlay maps the queue itself rather than
- * each kind presenting its own banner, because the queue must reach the
- * presentation in one piece for simultaneous banners to share a seat.
- */
-export type ToastDisplayMapper = (
-  notice: RowToastState,
-  t: TranslateNS<'workspace'>,
-  dismiss: () => void,
-) => ToastDisplay
-
-/** Existing overlay share: the queued notices, their dismissal, and the display mappings. */
+/** Existing overlay share: the current notice and its dismissal. */
 export interface RowToastInjected {
   hooks: {
-    /** Notices still on display, in arrival order; empty while none shows. */
-    toast: HostObservable<readonly RowToastState[]>
+    /** The notice on display, or none. */
+    toast: HostObservable<RowToastState | null>
   }
-  /**
-   * Take one notice down by its `seq`. A completion names its own entry, so
-   * an older banner finishing its hold never removes a newer one.
-   */
-  dismissToast: (seq: number) => void
-  /**
-   * Display mappings keyed by notice kind. The overlay maps the whole queue
-   * itself, because the queue must reach the presentation in one piece for
-   * simultaneous banners to share a seat.
-   */
-  displays: ReadonlyMap<RowToastState['kind'], ToastDisplayMapper>
+  /** Take the notice down. */
+  dismissToast: () => void
 }
 
 /** Business callbacks injected into their keyed Toast presentations. */
@@ -553,10 +529,11 @@ export type SessionArchiveConfirmProps =
   & Omit<SessionArchiveConfirmInjected, 'hooks'>
   & PropsHooks<SessionArchiveConfirmInjected['hooks']>
 
-/** Props of the existing overlay's notice dispatcher. */
+/** Props of the existing overlay's keyed notice dispatcher. */
 export type RowToastProps =
   PropsRuntime<'shell.overlay'>
-  & Pick<RowToastInjected, 'dismissToast' | 'displays'>
+  & PropsRenderSlots<'workspace.toast'>
+  & Pick<RowToastInjected, 'dismissToast'>
   & PropsHooks<RowToastInjected['hooks']>
 
 /** Full browser props: shell owner share + viewing store + injected actions + the locale seat. */
