@@ -1147,7 +1147,12 @@ export function WorkspaceBrowser({
   const searchInput = useRef<HTMLInputElement | null>(null)
   // The list area is this section's own vertical scroller; the sidebar hands wheel
   // scrolling over its viewport to it once the navigation has moved away.
-  const { bindScrollerRef } = useSectionScroller()
+  // rc.5's sidebar supplies this through the section hook context; older
+  // shells, and a slot that did not receive the hook, must still render the
+  // browser rather than letting the whole sidebar throw.
+  const bindScrollerRef = typeof useSectionScroller === 'function'
+    ? useSectionScroller().bindScrollerRef
+    : () => {}
   const focusSearch = useCallback(() => {
     searchInput.current?.focus({ preventScroll: true })
   }, [])
