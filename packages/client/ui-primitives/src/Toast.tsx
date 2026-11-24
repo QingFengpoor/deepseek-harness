@@ -10,6 +10,21 @@ const HOLD_MS = 3000
 const FADE_MS = 1000
 
 /**
+ * Props of one banner. Owners that may hold several notices at once render
+ * {@link ToastStack}, which lays simultaneous banners out instead of letting
+ * them share one fixed position.
+ */
+export interface ToastProps {
+  text: string
+  icon?: ReactNode
+  tone?: 'success'
+  anchor?: HTMLElement | null
+  holdMs?: number
+  actions?: readonly { label: string; prefix?: string; onClick: () => void }[]
+  onDone: () => void
+}
+
+/**
  * Transient top-center banner: slides in, holds at full opacity, fades out,
  * then reports done so the owner can unmount it. Re-showing the same text
  * restarts the cycle when the owner remounts the component (key it by a
@@ -41,17 +56,14 @@ const FADE_MS = 1000
  * follows (e.g. the composer card, so the banner centers over the chat column
  * rather than the whole window); omitted, it centers on the viewport.
  * @param props.onDone - called once the fade completes; unmount the toast here.
+ * @param props.position - 'viewport' keeps the banner fixed to the window;
+ * 'flowed' leaves it in its parent's layout, for {@link ToastStack}, whose
+ * element supplies the fixed seat and the vertical order.
  * @returns the floating banner.
  */
-export function Toast({ text, icon, tone, anchor, holdMs = HOLD_MS, actions, onDone }: {
-  text: string
-  icon?: ReactNode
-  tone?: 'success'
-  anchor?: HTMLElement | null
-  holdMs?: number
-  actions?: readonly { label: string; prefix?: string; onClick: () => void }[]
-  onDone: () => void
-}) {
+export function Toast({
+  text, icon, tone, anchor, holdMs = HOLD_MS, actions, onDone, position = 'viewport',
+}: ToastProps & { position?: 'viewport' | 'flowed' }) {
   const latestOnDone = useRef(onDone)
   useLayoutEffect(() => { latestOnDone.current = onDone }, [onDone])
   useEffect(() => {
@@ -72,9 +84,9 @@ export function Toast({ text, icon, tone, anchor, holdMs = HOLD_MS, actions, onD
     window.addEventListener('resize', measure)
     return () => { window.removeEventListener('resize', measure) }
   }, [anchor])
-  return createPortal(
+  const banner = (
     <div
-      className={css.toast}
+      className={position === 'flowed' ? `${css.toast} ${css.flowed}` : css.toast}
       role="alert"
       style={{
         ...left === null ? {} : { left },
@@ -95,6 +107,55 @@ export function Toast({ text, icon, tone, anchor, holdMs = HOLD_MS, actions, onD
           </Fragment>
         ))}
       </span>
+    </div>
+  )
+  // A flowed banner already sits inside the stack's own portal; portaling it
+  // again would lift it back to the body and undo the column it belongs to.
+  return position === 'flowed' ? banner : createPortal(banner, document.body)
+}
+
+/**
+ * Several notices at one seat: the element owns the single fixed position and
+ * lays its banners out in a column, newest on top. Independent banners that
+ * each fixed themselves to the same coordinates would cover one another, so
+ * every owner that can hold more than one notice presents them here.
+ * Entries expire individually: one banner's completion removes only its own
+ * entry, and reaching the fade of an older banner never ends a newer one.
+ * Every entry is shown; the column grows with the queue, so no notice is
+ * dropped for the sake of a bounded seat.
+ * @param props.entries - banners in arrival order; each needs a stable `key`.
+ * @param props.anchor - optional element whose horizontal center the column
+ * follows; omitted, it centers on the viewport.
+ * @returns the floating column, or nothing while it holds no entry.
+ */
+export function ToastStack({ entries, anchor }: {
+  entries: readonly ({ key: string } & ToastProps)[]
+  anchor?: HTMLElement | null
+}) {
+  // Anchor-centered placement re-measures on window resizes; the column is
+  // short-lived, so sub-window layout drift within that span stays out of
+  // scope.
+  const [left, setLeft] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    if (anchor == null) return
+    const measure = (): void => {
+      const rect = anchor.getBoundingClientRect()
+      setLeft(rect.left + rect.width / 2)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => { window.removeEventListener('resize', measure) }
+  }, [anchor])
+  if (entries.length === 0) return null
+  return createPortal(
+    <div
+      className={css.stack}
+      data-dsh-toast-stack=""
+      style={{ ...left === null ? {} : { left } }}
+    >
+      {[...entries].reverse().map(({ key, ...banner }) => (
+        <Toast key={key} position="flowed" {...banner} />
+      ))}
     </div>,
     document.body,
   )

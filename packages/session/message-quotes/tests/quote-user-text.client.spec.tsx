@@ -35,6 +35,34 @@ describe('quote UserText', () => {
     expect(view.container.textContent).toBe('before @file.ts /review after')
   })
 
+  it('keeps the author paragraph break between quoted answers', () => {
+    const renderText = createUserTextFixture()
+    const text = '> first question\n\nanswer one\n\n\n> second question\n\nanswer two'
+    const view = render(<>{renderText({ text, facts: {} })}</>)
+    expect(view.container.querySelectorAll('[data-quote-preview]')).toHaveLength(2)
+    expect(view.container.textContent).toBe('first question answer one\nsecond question answer two')
+  })
+
+  it('keeps a quote spliced inline on its surrounding text line', () => {
+    const renderText = createUserTextFixture()
+    const text = 'before\n\n> excerpt\n\nanswer'
+    const view = render(<>{renderText({ text, facts: {} })}</>)
+    expect(view.container.textContent).toBe('before excerpt answer')
+  })
+
+  it('keeps the authored break after a quote', () => {
+    const renderText = createUserTextFixture()
+    const view = render(<>{renderText({ text: '> excerpt\n\n\nanswer', facts: {} })}</>)
+    expect(view.container.textContent).toBe('excerpt\nanswer')
+  })
+
+  it('keeps the authored break between two quotes', () => {
+    const renderText = createUserTextFixture()
+    const view = render(<>{renderText({ text: '> first\n\n\n> second', facts: {} })}</>)
+    expect(view.container.querySelectorAll('[data-quote-preview]')).toHaveLength(2)
+    expect(view.container.textContent).toBe('first\nsecond')
+  })
+
   it('keeps nested quote markers literal in the excerpt', () => {
     const renderText = createUserTextFixture()
     const view = render(<>{renderText({ text: '> > nested', facts: {} })}</>)
@@ -96,7 +124,7 @@ describe('quote UserText', () => {
       const content = [
         { type: 'text', text: 'before\n\n' },
         { type: 'text', text: '> first\n> line' },
-        { type: 'text', text: '\n\n' },
+        { type: 'text', text: '\n\n\n' },
         { type: 'text', text: '> second' },
         { type: 'text', text: '\n\nafter' },
       ]
@@ -104,19 +132,21 @@ describe('quote UserText', () => {
       const nodes = registry.createEvaluator()({ text, facts: {} })
       expect(nodes.filter(node => node.id === 'quote')).toEqual([
         { id: 'quote', start: 8, end: 22, data: { text: 'first\nline' } },
-        { id: 'quote', start: 24, end: 32, data: { text: 'second' } },
+        { id: 'quote', start: 25, end: 33, data: { text: 'second' } },
       ])
-      expect(nodes.filter(node => node.id === 'text' && node.data.display === ' ')).toEqual([
+      expect(nodes.filter(node => node.id === 'text' && node.data.display !== undefined)).toEqual([
         { id: 'text', start: 6, end: 8, data: { text: '\n\n', display: ' ' } },
-        { id: 'text', start: 22, end: 24, data: { text: '\n\n', display: ' ' } },
-        { id: 'text', start: 32, end: 34, data: { text: '\n\n', display: ' ' } },
+        { id: 'text', start: 22, end: 25, data: { text: '\n\n\n', display: '\n' } },
+        { id: 'text', start: 33, end: 35, data: { text: '\n\n', display: ' ' } },
       ])
       expect(nodes.map(node => text.slice(node.start, node.end)).join('')).toBe(text)
       const facts: Readonly<Partial<UserTextFacts>> = {}
       const context = { read: <Key extends keyof UserTextFacts>(key: Key) => facts[key] }
-      expect(quoteRule.match(text, 10, context)).toMatchObject({ id: 'text', start: 22, end: 24 })
-      expect(quoteRule.match(text, 23, context)).toMatchObject({ id: 'quote', start: 24, end: 32 })
-      expect(quoteRule.match(text, 34, context)).toBeUndefined()
+      expect(quoteRule.match(text, 0, context)).toMatchObject({ id: 'text', start: 6, end: 8, data: { display: ' ' } })
+      expect(quoteRule.match(text, 22, context)).toMatchObject({ id: 'text', start: 22, end: 25, data: { display: '\n' } })
+      expect(quoteRule.match(text, 25, context)).toMatchObject({ id: 'quote', start: 25, end: 33 })
+      expect(quoteRule.match(text, 33, context)).toMatchObject({ id: 'text', start: 33, end: 35, data: { display: ' ' } })
+      expect(quoteRule.match(text, 35, context)).toBeUndefined()
     } finally { await ctx.fiber.dispose() }
   })
 })

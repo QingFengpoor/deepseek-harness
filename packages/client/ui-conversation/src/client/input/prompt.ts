@@ -9,7 +9,32 @@ interface DraftSpan {
   readonly token: DraftToken
 }
 
-const QUOTE_SEPARATOR = '\n\n'
+/**
+ * The submitted text must stay valid Markdown, yet the transcript also has to
+ * reproduce the layout the composer showed: a quote spliced inline with the
+ * sentence around it reads differently from a quote the author put on its own
+ * line. Markdown cannot spell that difference out, so a quote boundary records
+ * the author's own break as a third newline:
+ *
+ * - `text\n\n> excerpt` — the composer spliced the quote onto the text line.
+ * - `text\n\n\n> excerpt` — the author broke the line before the quote.
+ * - `> excerpt\n\nanswer` — the answer continues on the excerpt's own line.
+ * - `> excerpt\n\n\nanswer` — the author broke the line after the quote.
+ *
+ * The blank line is required in both cases: one newline only would let a
+ * block quote interrupt the paragraph, and a single newline after the quote
+ * would make the answer a lazy continuation line OF the quote block. Typed
+ * prose never produces the third newline, so hand-written block quotes keep
+ * their meaning (`> ` lines stay block quotes; see the transcript rule).
+ */
+const INLINE_BOUNDARY = '\n\n'
+const AUTHOR_BOUNDARY = '\n\n\n'
+
+const TRAILING_SPACES = /[ \t]+$/u
+const LEADING_SPACES = /^[ \t]+/u
+const TRAILING_BREAKS = /\n+$/u
+const LEADING_BREAKS = /^\n+/u
+const ONLY_BREAKS = /^\n+$/u
 
 function pushText(tokens: DraftToken[], text: string): void {
   if (text === '') return
@@ -21,29 +46,36 @@ function pushText(tokens: DraftToken[], text: string): void {
 function normalizeQuoteBoundaries(tokens: DraftToken[]): DraftToken[] {
   const normalized: DraftToken[] = []
   for (const token of tokens) {
+    const previous = normalized.at(-1)
     if (token.kind === 'text') {
-      pushText(normalized, token.text)
+      if (previous?.kind === 'quote') {
+        // Text after a quote is a fresh token, so the author's own leading line
+        // breaks decide whether the answer sits beside the excerpt or below it.
+        // An empty remainder records nothing: the separator only exists to
+        // introduce text, and adjacent quotes get their own boundary below.
+        const body = token.text.replace(LEADING_SPACES, '')
+        const broke = body.startsWith('\n')
+        const rest = body.replace(LEADING_BREAKS, '')
+        if (rest !== '') pushText(normalized, `${broke ? AUTHOR_BOUNDARY : INLINE_BOUNDARY}${rest}`)
+        else if (broke) pushText(normalized, AUTHOR_BOUNDARY)
+      } else {
+        pushText(normalized, token.text)
+      }
       continue
     }
-    const previous = normalized.at(-1)
-    if (previous?.kind === 'text') {
-      previous.text = previous.text.trimEnd()
-      if (previous.text !== '') previous.text += QUOTE_SEPARATOR
-      else normalized.pop()
-    }
-    if (normalized.at(-1)?.kind === 'quote') {
-      normalized.push({ kind: 'text', text: QUOTE_SEPARATOR })
+    if (previous?.kind === 'text' && !ONLY_BREAKS.test(previous.text)) {
+      // A pure-newline token is a boundary this pass already computed for the
+      // preceding quote; the author's own text is the case to normalize here.
+      const trimmed = previous.text.replace(TRAILING_SPACES, '')
+      previous.text = trimmed.endsWith('\n')
+        ? `${trimmed.replace(TRAILING_BREAKS, '')}${AUTHOR_BOUNDARY}`
+        : `${trimmed}${INLINE_BOUNDARY}`
+    } else if (previous?.kind === 'quote') {
+      // No author text between two quotes: keep them as separate blockquotes
+      // and let the transcript show the two chips on one line.
+      normalized.push({ kind: 'text', text: INLINE_BOUNDARY })
     }
     normalized.push(token)
-  }
-  for (let index = 0; index < normalized.length; index++) {
-    const token = normalized[index]
-    if (token?.kind !== 'quote') continue
-    const next = normalized[index + 1]
-    if (next?.kind !== 'text') continue
-    if (next.text === QUOTE_SEPARATOR && normalized[index + 2]?.kind === 'quote') continue
-    next.text = next.text.trimStart()
-    if (next.text !== '') next.text = `${QUOTE_SEPARATOR}${next.text}`
   }
   return normalized.filter(token => token.kind === 'quote' || token.text !== '')
 }

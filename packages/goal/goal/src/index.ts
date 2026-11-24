@@ -237,7 +237,7 @@ export class GoalService extends TypertRemoteService {
   static inject = ['agents', 'sessionProjections']
 
   static Config: z<Config> = z.object({
-    defaultMaxGoalRounds: z.number().default(256),
+    defaultMaxGoalRounds: z.number().default(16),
   })
 
   private readonly resolved: ResolvedConfig
@@ -248,7 +248,7 @@ export class GoalService extends TypertRemoteService {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'goals')
     this.resolved = {
-      defaultMaxGoalRounds: resolveMaxGoalRounds(config.defaultMaxGoalRounds ?? 256),
+      defaultMaxGoalRounds: resolveMaxGoalRounds(config.defaultMaxGoalRounds ?? 16),
     }
   }
 

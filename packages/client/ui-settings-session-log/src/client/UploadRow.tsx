@@ -1,5 +1,5 @@
 /** General settings row and persistent shell notice for API log uploads. */
-import { Switch, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Switch, ToastStack } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -13,7 +13,7 @@ export interface UploadInjected {
     mutation: ObservableSnapshot<UploadMutation>
   }
   setEnabled(enabled: boolean): Promise<void>
-  dismiss(): void
+  dismiss(seq: number): void
 }
 
 type Face = InjectFace<UploadInjected> & PropsLocale<'settings.sessionLog'>
@@ -44,7 +44,11 @@ export function UploadRow({ useUpload, useMutation, setEnabled, t }: PropsRuntim
  */
 export function UploadToast({ useMutation, dismiss, t }: PropsRuntime<'shell.overlay'> & Face) {
   const state = useMutation(value => value)
-  if (state.notice === null) return null
-  return <Toast key={state.sequence} text={t(state.notice)} onDone={dismiss}
-    {...state.notice === 'saved' ? { tone: 'success' as const } : {}} />
+  if (state.notices.length === 0) return null
+  return <ToastStack entries={state.notices.map(notice => ({
+    key: `session-log-upload-${String(notice.seq)}`,
+    text: t(notice.kind),
+    ...(notice.kind === 'saved' ? { tone: 'success' as const } : {}),
+    onDone: () => { dismiss(notice.seq) },
+  }))} />
 }

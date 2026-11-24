@@ -40,7 +40,7 @@
 import type { ContextMenuTarget } from '@deepseek-ai/dsh-client-ui-context-menu/client'
 import type {
   FactoryComponentPropsOf, HostObservable, InjectFace, PropsHooks, PropsLocale, PropsRenderFactories, PropsRenderSlots,
-  PropsRuntime, PropsStore, SlotHookFactory,
+  PropsRuntime, PropsStore, SlotHookFactory, TranslateNS,
 } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pull the owner SlotMap merges into programs that resolve the
 // runtime shares below.
@@ -66,7 +66,7 @@ declare module '@deepseek-ai/dsh-client-ui-context-menu/client' {
 
 /** One request for the existing Workspace rename or delete dialog. */
 export type WorkspaceActionRequest = {
-  readonly action: 'rename' | 'delete'
+  readonly action: 'rename' | 'delete' | 'roots'
   readonly workspaceId: WorkspaceId
   readonly displayTitle: string
   readonly storedTitle: string
@@ -320,6 +320,12 @@ export type WorkspaceBrowserInjected = {
   renameWorkspace: (workspaceId: WorkspaceId, title: string) => Promise<void>
   /** Delete only a Host Workspace registration; directory and Session logs remain. */
   deleteWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+  /** Append one existing directory as another Workspace root. */
+  addPath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
+  /** Remove one root; the last root is refused by the Host. */
+  removePath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
+  /** Promote one owned root to primary. */
+  setPrimaryPath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
   /**
    * Reorder a Workspace in the durable registry display order.
    * Omitted anchor appends to the end.
@@ -327,8 +333,10 @@ export type WorkspaceBrowserInjected = {
   insertWorkspaceBefore: (workspaceId: WorkspaceId, beforeWorkspaceId?: WorkspaceId) => Promise<void>
   /** Remove a Session from the registry-global archived set (the search results' restore button). */
   unarchiveSession: (sessionId: SessionId) => Promise<void>
-  /** Adopt a picked host directory as a real Workspace before targeting a Session. */
-  createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  /** Adopt picked host directories as a real Workspace before targeting a Session. */
+  createWorkspace: (input: { path?: string; paths?: readonly string[]; title?: string }) => Promise<WorkspaceView>
+  /** Open the host directory chooser once (used by root management). */
+  pickDirectory: () => Promise<string | null>
 }
 
 /** The browser's declared viewing store handle, shared with the row actions that write view state. */
@@ -365,7 +373,11 @@ export type RowToast =
    */
   | { kind: 'createFailed'; message: string }
 
-/** The notice on display; `seq` keys remounts so a repeated notice restarts its hold. */
+/**
+ * One queued notice; `seq` identifies the occurrence so its own completion
+ * removes exactly this entry and a repeat is never mistaken for the earlier
+ * one. `seq` is unique for the life of the page, never a per-list index.
+ */
 export type RowToastState = RowToast & { seq: number }
 
 /**
@@ -480,14 +492,41 @@ export interface SessionRenameDialogInjected {
   renameSession: (sessionId: SessionId, title: string) => Promise<void>
 }
 
-/** Existing overlay share: the current notice and its dismissal. */
+/** Plain display fields one notice kind produces; the overlay feeds them to the shared stack. */
+export interface ToastDisplay {
+  text: string
+  tone: 'plain' | 'warning' | 'success'
+  holdMs?: number
+  actions?: readonly { label: string; prefix?: string; onClick: () => void }[]
+}
+/**
+ * One kind's display mapping. The overlay maps the queue itself rather than
+ * each kind presenting its own banner, because the queue must reach the
+ * presentation in one piece for simultaneous banners to share a seat.
+ */
+export type ToastDisplayMapper = (
+  notice: RowToastState,
+  t: TranslateNS<'workspace'>,
+  dismiss: () => void,
+) => ToastDisplay
+
+/** Existing overlay share: the queued notices, their dismissal, and the display mappings. */
 export interface RowToastInjected {
   hooks: {
-    /** The notice on display, or none. */
-    toast: HostObservable<RowToastState | null>
+    /** Notices still on display, in arrival order; empty while none shows. */
+    toast: HostObservable<readonly RowToastState[]>
   }
-  /** Take the notice down. */
-  dismissToast: () => void
+  /**
+   * Take one notice down by its `seq`. A completion names its own entry, so
+   * an older banner finishing its hold never removes a newer one.
+   */
+  dismissToast: (seq: number) => void
+  /**
+   * Display mappings keyed by notice kind. The overlay maps the whole queue
+   * itself, because the queue must reach the presentation in one piece for
+   * simultaneous banners to share a seat.
+   */
+  displays: ReadonlyMap<RowToastState['kind'], ToastDisplayMapper>
 }
 
 /** Business callbacks injected into their keyed Toast presentations. */
@@ -514,11 +553,10 @@ export type SessionArchiveConfirmProps =
   & Omit<SessionArchiveConfirmInjected, 'hooks'>
   & PropsHooks<SessionArchiveConfirmInjected['hooks']>
 
-/** Props of the existing overlay's keyed notice dispatcher. */
+/** Props of the existing overlay's notice dispatcher. */
 export type RowToastProps =
   PropsRuntime<'shell.overlay'>
-  & PropsRenderSlots<'workspace.toast'>
-  & Pick<RowToastInjected, 'dismissToast'>
+  & Pick<RowToastInjected, 'dismissToast' | 'displays'>
   & PropsHooks<RowToastInjected['hooks']>
 
 /** Full browser props: shell owner share + viewing store + injected actions + the locale seat. */
@@ -544,7 +582,7 @@ export type WorkspaceBrowserProps =
  */
 export type WorkspacePickerInjected = DirectoryPickingInjected & {
   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
-  createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  createWorkspace: (input: { path?: string; paths?: readonly string[]; title?: string }) => Promise<WorkspaceView>
 }
 
 /**

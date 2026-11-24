@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-sandbox-local/profiles
  */
 
+import { existsSync } from 'node:fs'
 import { grantArgs as landlockGrantArgs } from '@deepseek-ai/node-addon-system/landlock-run'
 import { workspaceWritableRoots, writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -17,20 +18,30 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
   const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent']
   if (policy.mode === 'workspace-write') {
     args.push('--tmpfs', '/tmp')
-    for (const root of workspaceWritableRoots(policy)) args.push('--bind', root, root)
+    // --bind-try, not --bind: a root deleted from disk after it was registered
+    // must narrow the grant, not abort every confined command with a bwrap
+    // setup failure. Missing roots grant nothing either way.
+    for (const root of workspaceWritableRoots(policy)) args.push('--bind-try', root, root)
   }
   return args
 }
 
 /**
  * Build the Landlock launcher grants for one file-effect policy.
+ *
+ * Landlock rules reference real inodes, so a root deleted from disk after it
+ * was registered would make the launcher's ruleset construction fail and take
+ * every confined command with it. Skip missing roots (the bwrap dialect's
+ * `--bind-try` equivalent): a missing root grants nothing either way.
  * @param policy - file-effect policy to express as Landlock allow-list grants.
  * @returns launcher grant arguments before the trailing separator and command argv.
  */
 export function landlockProfileArgs(policy: SandboxPolicy): string[] {
   const readWrite = ['/dev/null']
   if (policy.mode === 'workspace-write') {
-    readWrite.push('/tmp', ...workspaceWritableRoots(policy))
+    // Landlock rules reference real inodes: a root deleted after registration
+    // must be skipped, not turn every confined command into a ruleset failure.
+    readWrite.push('/tmp', ...workspaceWritableRoots(policy).filter(existsSync))
   }
   return landlockGrantArgs({ readOnly: ['/'], readWrite })
 }

@@ -60,22 +60,32 @@ export interface SessionActivity {
 }
 
 /**
- * One workspace: a stable id over an existing directory, a display title, and
- * an ordered candidate account of sessions. Membership validates header cwd
- * against the workspace path, but preserves an existing account when its
- * fully qualified cwd is missing. Consumers only see this interface; the
- * implementation stays private.
+ * One workspace: a stable id over one or more existing directories, a display
+ * title, and an ordered candidate account of sessions. Membership validates
+ * header cwd against the workspace roots, but preserves an existing account
+ * when its fully qualified cwd is missing. Consumers only see this interface;
+ * the implementation stays private.
  */
 export interface Workspace {
   /** Stable record id (generated uuid). */
   readonly id: WorkspaceId
 
   /**
-   * Canonical directory path: the `fs.realpath` of the path given at create
-   * time (trailing slashes, `..`, and symlinks all resolved). Never rewritten
-   * afterwards, even when the directory disappears (see {@link status}).
+   * Canonical primary directory path: the `fs.realpath` of the first path given
+   * at create time (trailing slashes, `..`, and symlinks all resolved). It is
+   * always equal to `paths[0]` and stays the compatibility/default field for
+   * consumers that only understand one root. Never rewritten afterwards, even
+   * when the directory disappears (see {@link status}).
    */
   readonly path: string
+
+  /**
+   * Every canonical root of this Workspace, primary first and duplicate-free.
+   * Always contains at least {@link path}; records written before multi-root
+   * resolve to exactly `[path]`. Membership validates a Session's header cwd
+   * against this set rather than against {@link path} alone.
+   */
+  readonly paths: readonly string[]
 
   /** Display title. Defaults to the final path segment, or a filesystem root's own spelling; duplicates are allowed. */
   readonly title: string
@@ -111,9 +121,9 @@ export interface Workspace {
    * accounted id resolves without writing, aside from the durable
    * filtered-candidate prune every accepted mutation performs. A new id's
    * live or persisted
-   * header cwd must resolve to an existing directory equal to {@link path};
-   * unknown ids, missing or invalid cwd values, and mismatches reject without
-   * writing.
+   * header cwd must resolve to an existing directory that is one of
+   * {@link paths}; unknown ids, missing or invalid cwd values, and non-member
+   * directories reject without writing.
    * @param sessionId - The session to record.
    * @returns resolution after durability.
    */
@@ -144,10 +154,10 @@ export interface Workspace {
   detachSession(sessionId: SessionId): Promise<void>
 
   /**
-   * Live directory check, uncached: whether {@link path} currently exists and
-   * is a directory. A missing directory never mutates the record — the
-   * directory may only be temporarily moved.
-   * @returns `'ok'` when the directory exists, `'missing-dir'` otherwise.
+   * Live directory check, uncached: whether every {@link paths} entry currently
+   * exists and is a directory. A missing directory never mutates the record —
+   * the directory may only be temporarily moved.
+   * @returns `'ok'` when all roots exist, `'missing-dir'` when any root is missing.
    */
   status(): Promise<'ok' | 'missing-dir'>
 }

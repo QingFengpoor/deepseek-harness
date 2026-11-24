@@ -19,8 +19,11 @@ export function renderGoalRoundPrompt(goal: GoalView, round: number): ContentBlo
       + 'tool results, and durable session state as authoritative; inspect them instead of assuming '
       + 'earlier narration is still current. Make concrete progress and verify the result. Before '
       + 'claiming completion, gather evidence that the whole objective is achieved, read the current '
-      + 'goal, and mark it complete. If work remains, leave the goal active for the next round. Follow '
-      + 'the configured goal-tool policy before reporting a blocker.\n'
+      + 'goal, and mark it complete. If you can still make progress on your own, leave the goal active '
+      + 'for the next round. If the next step needs the human to decide, approve, choose, or supply '
+      + 'something, pause the goal with update_goal action pause before ending this round and ask for '
+      + 'exactly what you need; reporting that you are waiting without pausing does not stop the next '
+      + 'round. Follow the configured goal-tool policy before reporting a blocker.\n'
       + '</goal_round>',
   }]
 }

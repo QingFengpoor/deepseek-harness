@@ -7,17 +7,24 @@ export interface UploadSettings {
   enabled: boolean
 }
 
-/** Mutation state shared by the preference row and shell notice. */
+/** One save outcome queued for the shell notice. */
+export interface UploadNotice {
+  readonly kind: 'saved' | 'failed'
+  readonly seq: number
+}
+
+/** Mutation state shared by the preference row and shell notices. */
 export interface UploadMutation {
   busy: boolean
-  notice: 'saved' | 'failed' | null
+  /** Save outcomes in arrival order; each banner expires independently. */
+  notices: readonly UploadNotice[]
   sequence: number
 }
 
 /** Writes the Host setting without publishing an optimistic upload state. */
 export class UploadPreference {
   /** Observable mutation outcome. */
-  readonly state = createSnapshotStore<UploadMutation>({ busy: false, notice: null, sequence: 0 })
+  readonly state = createSnapshotStore<UploadMutation>({ busy: false, notices: [], sequence: 0 })
 
   /** @param form - Host-owned configuration form. */
   constructor(private readonly form: ConfigForm<UploadSettings>) {}
@@ -29,7 +36,7 @@ export class UploadPreference {
    */
   async setEnabled(enabled: boolean): Promise<void> {
     if (this.state.getSnapshot().busy) return
-    this.state.update((state) => { state.busy = true; state.notice = null })
+    this.state.update((state) => { state.busy = true })
     let accepted = false
     try {
       accepted = await this.form.set('enabled', enabled)
@@ -38,13 +45,13 @@ export class UploadPreference {
     }
     this.state.update((state) => {
       state.busy = false
-      state.notice = accepted ? 'saved' : 'failed'
       state.sequence++
+      state.notices = [...state.notices, { kind: accepted ? 'saved' : 'failed', seq: state.sequence }]
     })
   }
 
-  /** Clear the displayed mutation notice. */
-  dismiss(): void {
-    this.state.update((state) => { state.notice = null })
+  /** Clear one mutation notice by its sequence. */
+  dismiss(seq: number): void {
+    this.state.update((state) => { state.notices = state.notices.filter(notice => notice.seq !== seq) })
   }
 }

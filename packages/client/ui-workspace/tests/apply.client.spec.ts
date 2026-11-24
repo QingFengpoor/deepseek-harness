@@ -25,7 +25,6 @@ import { ArchiveSessionRowButton, SessionArchiveConfirmDialog } from '../src/cli
 import { PinSessionRowButton } from '../src/client/session-actions/PinSession.tsx'
 import { SessionRenameDialog } from '../src/client/session-actions/RenameSession.tsx'
 import { RowActionToast } from '../src/client/session-actions/RowActionToast.tsx'
-import type { ArchiveToastInjected, ToastDisplayInjected } from '../src/client/contract/toast.ts'
 import { WorkspacePicker } from '../src/client/WorkspacePicker.tsx'
 import { FLAT_SESSION_ORDER_KEY } from '../src/client/stores.ts'
 import { UNGROUPED_KEY } from '../src/client/tree.ts'
@@ -43,7 +42,7 @@ const sessionState = (items: readonly SessionSummary[]): SessionListState => ({
   projectionsBySession: {},
 })
 const workspace = (id: string, sessionIds: readonly string[]): WorkspaceView => ({
-  workspaceId: id as WorkspaceId, path: `/projects/${id}`, title: id,
+  workspaceId: id as WorkspaceId, path: `/projects/${id}`, paths: [`/projects/${id}`], title: id,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
 const workspaceState = (
@@ -284,10 +283,10 @@ describe('ui-workspace apply', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const face = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
     await vi.waitFor(() => {
-      expect(face.hooks.toast.getSnapshot()).toMatchObject({ kind: 'defaultWorkspaceFailed' })
+      expect(face.hooks.toast.getSnapshot()).toMatchObject([{ kind: 'defaultWorkspaceFailed' }])
     })
-    face.dismissToast()
-    expect(face.hooks.toast.getSnapshot()).toBeNull()
+    face.dismissToast(face.hooks.toast.getSnapshot()[0]!.seq)
+    expect(face.hooks.toast.getSnapshot()).toEqual([])
   })
 
   it('registers browser and pickers for declarations arriving before or after apply', async () => {
@@ -334,22 +333,21 @@ describe('ui-workspace apply', () => {
     expect(rows('shell.overlay')).toEqual([
       ['workspace.session-rename', undefined, SessionRenameDialog, 'workspace'],
       ['workspace.session-archive', undefined, SessionArchiveConfirmDialog, 'workspace'],
-      ['workspace.row-toast', undefined, RowActionToast, undefined],
+      ['workspace.row-toast', undefined, RowActionToast, 'workspace'],
     ])
-    // Only archive notice entries share the browser's viewing store.
+    // The browser reads the viewing store; the notice overlay maps the queue
+    // itself, so it holds no keyed registrations of its own.
     const browser = b.slots.entries('sidebar.workspaces')[0]!
     expect(browser.store).toBeDefined()
     expect(viewInstance(b.slots)).toBe(viewInstance(b.slots))
     const rowToastEntry = entry(b.slots, 'shell.overlay', 'workspace.row-toast')
     expect(rowToastEntry.store).toBeUndefined()
-    expect(b.slots.entries('workspace.toast').map(row => row.options.key)).toEqual([
+    expect(rowToastEntry.locale).toBe('workspace')
+    const notices = faceOf(rowToastEntry) as RowToastInjected
+    expect([...notices.displays.keys()]).toEqual([
       'sessionIdCopied', 'sessionIdCopyFailed', 'pinFailed', 'unpinFailed', 'archivedNotOpenable',
       'defaultWorkspaceFailed', 'shortcutForkFailed', 'createFailed', 'forkRequiresOpen', 'archived', 'stoppedAndArchived',
     ])
-    for (const registration of b.slots.entries('workspace.toast')) {
-      expect(registration.locale).toBe('workspace')
-      expect(registration.store).toBe(['archived', 'stoppedAndArchived'].includes(String(registration.options.key)) ? browser.store : undefined)
-    }
     for (const registration of [...b.slots.entries(MENU_ITEM), ...b.slots.entries(ROW_ACTION), ...b.slots.entries('shell.overlay')]) {
       if (registration === rowToastEntry) continue
       expect(registration.store).toBeUndefined()
@@ -374,7 +372,7 @@ describe('ui-workspace apply', () => {
     onTestFinished(() => { vi.unstubAllGlobals() })
     await action.copySessionId(sid('cold-session'))
     expect(writeText).toHaveBeenCalledExactlyOnceWith('cold-session')
-    expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: accepted ? 'sessionIdCopied' : 'sessionIdCopyFailed' })
+    expect(toast.hooks.toast.getSnapshot()).toMatchObject([{ kind: accepted ? 'sessionIdCopied' : 'sessionIdCopyFailed' }])
     expect(b.retain).not.toHaveBeenCalled()
     expect(b.using).not.toHaveBeenCalled()
     expect(b.binding).not.toHaveBeenCalled()
@@ -401,33 +399,42 @@ describe('ui-workspace apply', () => {
     }
 
     browser.notifyArchivedNotOpenable()
-    expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'archivedNotOpenable' })
+    expect(toast.hooks.toast.getSnapshot()).toMatchObject([{ kind: 'archivedNotOpenable' }])
     b.fork.mockRejectedValueOnce(new SessionForkError(
       new RemoteError('session/fork-unavailable', 'no completed turn', { sessionId: sid('source') }), sid('source'),
     ))
     invoke()
     await vi.waitFor(() => {
-      expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'shortcutForkFailed', reason: 'unavailable' })
+      expect(toast.hooks.toast.getSnapshot()).toMatchObject([
+        { kind: 'archivedNotOpenable' }, { kind: 'shortcutForkFailed', reason: 'unavailable' },
+      ])
     })
     expect(b.fork).toHaveBeenCalledExactlyOnceWith({ sessionId: sid('source'), increaseTitle: true })
     expect(warning).not.toHaveBeenCalled()
-    const unavailable = toast.hooks.toast.getSnapshot()
     b.fork.mockRejectedValueOnce(new Error('connection closed'))
     invoke()
     await vi.waitFor(() => {
-      expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'shortcutForkFailed', reason: 'failed' })
+      expect(toast.hooks.toast.getSnapshot()).toMatchObject([
+        { kind: 'archivedNotOpenable' },
+        { kind: 'shortcutForkFailed', reason: 'unavailable' },
+        { kind: 'shortcutForkFailed', reason: 'failed' },
+      ])
     })
-    expect(toast.hooks.toast.getSnapshot()).not.toBe(unavailable)
     expect(warning).toHaveBeenCalledExactlyOnceWith('session fork rejected:', expect.any(Error))
-    const failure = toast.hooks.toast.getSnapshot()
+    const queued = toast.hooks.toast.getSnapshot()
     removeBrowser()
     expect(b.slots.entries('sidebar.workspaces')).toEqual([])
     expect(entry(b.slots, 'shell.overlay', 'workspace.row-toast').component).toBe(RowActionToast)
-    expect(toast.hooks.toast.getSnapshot()).toBe(failure)
+    expect(toast.hooks.toast.getSnapshot()).toBe(queued)
     browser.notifyArchivedNotOpenable()
-    expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'archivedNotOpenable' })
-    toast.dismissToast()
-    expect(toast.hooks.toast.getSnapshot()).toBeNull()
+    expect(toast.hooks.toast.getSnapshot()).toHaveLength(4)
+    // Settling one notice leaves the rest of the queue in place.
+    toast.dismissToast(queued[1]!.seq)
+    expect(toast.hooks.toast.getSnapshot()).toMatchObject([
+      { kind: 'archivedNotOpenable' },
+      { kind: 'shortcutForkFailed', reason: 'failed' },
+      { kind: 'archivedNotOpenable' },
+    ])
     expect(browser).not.toHaveProperty('dismissForkError')
   })
 
@@ -481,7 +488,7 @@ describe('ui-workspace apply', () => {
     })
     // The saved positions lead without leaving Last updated, and a successful pin raises no notice.
     expect(view.getSnapshot().orderBy).toBe('updated')
-    expect(toast.hooks.toast.getSnapshot()).toBeNull()
+    expect(toast.hooks.toast.getSnapshot()).toEqual([])
 
     // The hover button's face is the same behavior.
     const pinButton = faceOf(entry(b.slots, ROW_ACTION, 'pin')) as PinSessionInjected
@@ -497,7 +504,7 @@ describe('ui-workspace apply', () => {
     expect(b.unpinSession).toHaveBeenCalledWith('one')
     await settled()
     expect(view.getSnapshot().sessionOrderByAccount).toBe(before)
-    expect(toast.hooks.toast.getSnapshot()).toBeNull()
+    expect(toast.hooks.toast.getSnapshot()).toEqual([])
   })
 
   it('raises the pin and unpin failure notices and writes no order', async () => {
@@ -512,10 +519,15 @@ describe('ui-workspace apply', () => {
 
     b.pinSession.mockRejectedValueOnce(new Error('pin wire down'))
     pin.pinSession(sid('one'))
-    await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'pinFailed', seq: 1 }) })
+    await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'pinFailed', seq: 1 }]) })
     b.unpinSession.mockRejectedValueOnce(new Error('unpin wire down'))
     pin.unpinSession(sid('one'))
-    await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'unpinFailed', seq: 2 }) })
+    // The unpin failure joins the pin failure: a burst keeps every notice.
+    await vi.waitFor(() => {
+      expect(toast.hooks.toast.getSnapshot()).toEqual([
+        { kind: 'pinFailed', seq: 1 }, { kind: 'unpinFailed', seq: 2 },
+      ])
+    })
     expect(view.getSnapshot().sessionOrderByAccount).toEqual({})
   })
 
@@ -531,14 +543,14 @@ describe('ui-workspace apply', () => {
     archive.archiveSession(sid('one'))
     expect(archiveSession).toHaveBeenCalledWith('one')
     await vi.waitFor(() => {
-      expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archived', sessionId: 'one', seq: 1 })
+      expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'archived', sessionId: 'one', seq: 1 }])
     })
     // The menu row's face is the same behavior; a restore raises no notice.
     const archiveRow = faceOf(entry(b.slots, ROW_ACTION, 'archive')) as ArchiveSessionInjected
     archiveRow.unarchiveSession(sid('one'))
     expect(unarchiveSession).toHaveBeenCalledWith('one')
     await settled()
-    expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archived', sessionId: 'one', seq: 1 })
+    expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'archived', sessionId: 'one', seq: 1 }])
 
     const archiveRejection = new Error('archive exploded')
     const unarchiveRejection = new Error('unarchive exploded')
@@ -554,7 +566,7 @@ describe('ui-workspace apply', () => {
       warn.mockRestore()
     }
     // A rejected archive raises no notice.
-    expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archived', sessionId: 'one', seq: 1 })
+    expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'archived', sessionId: 'one', seq: 1 }])
   })
 
   it('turns the Host\'s running-work refusal into the stop-and-archive confirmation, which archives with stopActivity', async () => {
@@ -581,7 +593,7 @@ describe('ui-workspace apply', () => {
       })
       // The refusal is a question, not a diagnostic, and nothing is archived yet.
       expect(warn).not.toHaveBeenCalled()
-      expect(toast.hooks.toast.getSnapshot()).toBeNull()
+      expect(toast.hooks.toast.getSnapshot()).toEqual([])
       expect(archiveSession).toHaveBeenCalledWith('busy')
 
       // Cancelling settles the request; confirming asks the Host to stop the work.
@@ -589,7 +601,7 @@ describe('ui-workspace apply', () => {
       expect(confirm.hooks.archiveRequest.getSnapshot()).toBeNull()
       await confirm.stopAndArchiveSession(sid('busy'))
       expect(archiveSession).toHaveBeenLastCalledWith('busy', { stopActivity: true })
-      expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'stoppedAndArchived', sessionId: 'busy', seq: 1 })
+      expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'stoppedAndArchived', sessionId: 'busy', seq: 1 }])
     } finally {
       warn.mockRestore()
     }
@@ -604,31 +616,33 @@ describe('ui-workspace apply', () => {
     const browser = faceOf(b.slots.entries('sidebar.workspaces')[0]!) as WorkspaceBrowserInjected
     const view = viewInstance(b.slots)
 
-    // The browser raises the not-openable notice into the same entry, and the source notifies.
-    expect(toast.hooks.toast.getSnapshot()).toBeNull()
+    // The browser raises the not-openable notice into the same queue, and the source notifies.
+    expect(toast.hooks.toast.getSnapshot()).toEqual([])
     const noticed = vi.fn()
     const unsubscribe = toast.hooks.toast.subscribe(noticed)
     browser.notifyArchivedNotOpenable()
-    expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archivedNotOpenable', seq: 1 })
+    expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'archivedNotOpenable', seq: 1 }])
     expect(noticed).toHaveBeenCalledOnce()
-    toast.dismissToast()
-    expect(toast.hooks.toast.getSnapshot()).toBeNull()
+    toast.dismissToast(1)
+    expect(toast.hooks.toast.getSnapshot()).toEqual([])
     unsubscribe()
 
     expect(view.getSnapshot().archivedFilter).toBe('default')
-    const archived = b.slots.entries('workspace.toast').find(row => row.options.key === 'archived')!
-    const archiveDisplay = faceOf(archived) as ArchiveToastInjected
-    archiveDisplay.filterAction(b.locale.bind('workspace'), toast.dismissToast).onClick()
+    const archiveDisplay = toast.displays.get('archived')!
+    const shownBefore = archiveDisplay({ kind: 'archived', sessionId: sid('one'), seq: 1 }, b.locale.bind('workspace'), () => {})
+    // The filter action follows the undo action and only offers itself while
+    // archived rows are hidden.
+    shownBefore.actions![1]!.onClick()
     expect(view.getSnapshot().archivedFilter).toBe('show')
 
-    archiveDisplay.display({ kind: 'archived', sessionId: sid('one'), seq: 1 }, b.locale.bind('workspace'), toast.dismissToast).actions![0]!.onClick()
+    archiveDisplay({ kind: 'archived', sessionId: sid('one'), seq: 1 }, b.locale.bind('workspace'), () => { toast.dismissToast(1) }).actions![0]!.onClick()
     expect(unarchiveSession).toHaveBeenCalledWith('one')
     // A rejected undo is a console diagnostic.
     const rejection = new Error('unarchive exploded')
     unarchiveSession.mockRejectedValueOnce(rejection)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      archiveDisplay.display({ kind: 'archived', sessionId: sid('two'), seq: 2 }, b.locale.bind('workspace'), toast.dismissToast).actions![0]!.onClick()
+      archiveDisplay({ kind: 'archived', sessionId: sid('two'), seq: 2 }, b.locale.bind('workspace'), () => { toast.dismissToast(2) }).actions![0]!.onClick()
       await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith('session unarchive rejected:', rejection) })
     } finally {
       warn.mockRestore()
@@ -713,7 +727,7 @@ describe('ui-workspace apply', () => {
       const { onCreated, ...payload } = request
       expect(payload).toEqual({ sessionId: 'source', increaseTitle: true, allowMigration: false })
       expect(onCreated).toBeTypeOf('function')
-      expect(toast.hooks.toast.getSnapshot()).toBeNull()
+      expect(toast.hooks.toast.getSnapshot()).toEqual([])
       expect(b.retain).not.toHaveBeenCalled()
       expect(b.selectPanel).not.toHaveBeenCalled()
     },
@@ -733,15 +747,15 @@ describe('ui-workspace apply', () => {
 
     fork.forkSession(sid('source'))
     await vi.waitFor(() => {
-      expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'forkRequiresOpen', sessionId: 'source', seq: 1 })
+      expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'forkRequiresOpen', sessionId: 'source', seq: 1 }])
     })
 
     expect(b.fork).toHaveBeenCalledOnce()
     expect(b.retain).not.toHaveBeenCalled()
     expect(b.selectPanel).not.toHaveBeenCalled()
-    toast.dismissToast()
-    ;(faceOf(b.slots.entries('workspace.toast').find(row => row.options.key === 'forkRequiresOpen')!) as ToastDisplayInjected<'forkRequiresOpen'>)
-      .display({ kind: 'forkRequiresOpen', sessionId: sid('source'), seq: 1 }, b.locale.bind('workspace'), toast.dismissToast).actions![0]!.onClick()
+    const forkDisplay = toast.displays.get('forkRequiresOpen')!
+    forkDisplay({ kind: 'forkRequiresOpen', sessionId: sid('source'), seq: 1 }, b.locale.bind('workspace'), () => { toast.dismissToast(1) })
+      .actions![0]!.onClick()
     expect(b.retain).toHaveBeenCalledExactlyOnceWith('source', { source: 'mainView' })
     expect(b.selectPanel).toHaveBeenCalledExactlyOnceWith(null)
     expect(b.fork).toHaveBeenCalledOnce()
@@ -763,15 +777,15 @@ describe('ui-workspace apply', () => {
       const toast = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
       fork.forkSession(sid('source'))
       await vi.waitFor(() => {
-        expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'forkRequiresOpen', sessionId: 'source', seq: 1 })
+        expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'forkRequiresOpen', sessionId: 'source', seq: 1 }])
       })
       if (timing === 'after the notice') b.setWorkspaces(workspaceState([], [sid('source')]))
 
-      toast.dismissToast()
-      ;(faceOf(b.slots.entries('workspace.toast').find(row => row.options.key === 'forkRequiresOpen')!) as ToastDisplayInjected<'forkRequiresOpen'>)
-        .display({ kind: 'forkRequiresOpen', sessionId: sid('source'), seq: 1 }, b.locale.bind('workspace'), toast.dismissToast).actions![0]!.onClick()
+      toast.displays.get('forkRequiresOpen')!(
+        { kind: 'forkRequiresOpen', sessionId: sid('source'), seq: 1 }, b.locale.bind('workspace'), () => { toast.dismissToast(1) },
+      ).actions![0]!.onClick()
 
-      expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archivedNotOpenable', seq: 2 })
+      expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'archivedNotOpenable', seq: 2 }])
       expect(b.retain).not.toHaveBeenCalled()
       expect(b.fork).toHaveBeenCalledOnce()
       expect(b.selectPanel).not.toHaveBeenCalled()
@@ -799,7 +813,7 @@ describe('ui-workspace apply', () => {
     const { onCreated, ...payload } = request
     expect(payload).toEqual({ sessionId: 'source', increaseTitle: true, allowMigration: false })
     expect(onCreated).toBeTypeOf('function')
-    expect(toast.hooks.toast.getSnapshot()).toBeNull()
+    expect(toast.hooks.toast.getSnapshot()).toEqual([])
     expect(b.retain).not.toHaveBeenCalled()
     expect(b.selectPanel).not.toHaveBeenCalled()
   })
@@ -829,7 +843,7 @@ describe('ui-workspace apply', () => {
     expect(forkSession).toHaveBeenCalledOnce()
     await expect(forkSession.mock.results[0]!.value).rejects.toBe(error)
 
-    expect(toast.hooks.toast.getSnapshot()).toBeNull()
+    expect(toast.hooks.toast.getSnapshot()).toEqual([])
     expect(b.fork).toHaveBeenCalledOnce()
     expect(b.retain).not.toHaveBeenCalled()
     expect(b.selectPanel).not.toHaveBeenCalled()
@@ -944,7 +958,6 @@ describe('ui-workspace apply', () => {
     expect(b.slots.entries(MENU_ITEM)).toHaveLength(0)
     expect(b.slots.entries(ROW_ACTION)).toHaveLength(0)
     expect(b.slots.entries('shell.overlay')).toHaveLength(0)
-    expect(b.slots.entries('workspace.toast')).toHaveLength(0)
     expect(b.slots.snapshot('factory:workspace.toast.content')).toEqual([])
     expect(b.slots.snapshot('factory:workspace.picker')).toEqual([])
   })
@@ -962,13 +975,13 @@ it('keeps one archive notice for queued cleanup and replaces it on failure', asy
     return { text: '已归档，工作树将被清理', tone: 'success' }
   })
   archive.archiveSession(sid('one'))
-  await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'archived', message: '已归档，工作树将被清理', seq: 1 }) })
+  await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toMatchObject([{ kind: 'archived', message: '已归档，工作树将被清理', seq: 1 }]) })
   b.setWorkspaces(workspaceState([], [sid('one')]))
   b.ctx.emit('workspace/archive-followup-failed', sid('one'), '已归档，工作树清理失败')
-  expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'archived', message: '已归档，工作树清理失败', tone: 'warning', seq: 2 })
+  expect(toast.hooks.toast.getSnapshot()).toMatchObject([{ kind: 'archived', message: '已归档，工作树清理失败', tone: 'warning', seq: 2 }])
   b.setWorkspaces(workspaceState([]))
   b.ctx.emit('workspace/archive-followup-failed', sid('one'), 'late failure')
-  expect(toast.hooks.toast.getSnapshot()?.seq).toBe(2)
+  expect(toast.hooks.toast.getSnapshot()[0]?.seq).toBe(2)
 })
 
 it('returns to the ordinary archive notice when a queued cleanup settles without acting', async () => {
@@ -983,15 +996,15 @@ it('returns to the ordinary archive notice when a queued cleanup settles without
     return { text: '已归档，工作树将被清理', tone: 'success' }
   })
   archive.archiveSession(sid('one'))
-  await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'archived', message: '已归档，工作树将被清理', seq: 1 }) })
+  await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toMatchObject([{ kind: 'archived', message: '已归档，工作树将被清理', seq: 1 }]) })
   b.setWorkspaces(workspaceState([], [sid('one')]))
   b.ctx.emit('workspace/archive-followup-settled', sid('one'))
   const settled = toast.hooks.toast.getSnapshot()
-  expect(settled).toMatchObject({ kind: 'archived', seq: 2 })
-  expect(settled).not.toHaveProperty('message')
+  expect(settled).toMatchObject([{ kind: 'archived', seq: 2 }])
+  expect(settled[0]).not.toHaveProperty('message')
   b.setWorkspaces(workspaceState([]))
   b.ctx.emit('workspace/archive-followup-settled', sid('one'))
-  expect(toast.hooks.toast.getSnapshot()?.seq).toBe(2)
+  expect(toast.hooks.toast.getSnapshot()[0]?.seq).toBe(2)
 })
 
 it('falls back to the ordinary notice when a follow-up notice provider fails', async () => {
@@ -1005,7 +1018,7 @@ it('falls back to the ordinary notice when a follow-up notice provider fails', a
   const toast = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
   const archive = faceOf(entry(b.slots, ROW_ACTION, 'archive')) as ArchiveSessionInjected
   archive.archiveSession(sid('one'))
-  await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archived', sessionId: 'one', seq: 1 }) })
+  await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual([{ kind: 'archived', sessionId: 'one', seq: 1 }]) })
   expect(warning).toHaveBeenCalledWith('session archive notice unavailable:', failure)
   warning.mockRestore()
 })
@@ -1020,7 +1033,7 @@ it('captures Workspace menu requests, rechecks mutable access, and withdraws reg
   const target = { kind: 'workspace' as const, value: { workspaceId: 'alpha' as WorkspaceId, path: '/projects/alpha', displayTitle: 'Alpha' } }
   const menu = b.ctx.contextMenus.resolve(target)
   await menu.ready
-  expect(menu.source.getSnapshot().map(item => item.id)).toEqual(['workspace.rename/rename', 'workspace.delete/delete'])
+  expect(menu.source.getSnapshot().map(item => item.id)).toEqual(['workspace.rename/rename', 'workspace.roots/manage-roots', 'workspace.delete/delete'])
   menu.select('workspace.rename/rename')
   expect(browser.hooks.workspaceActionRequest.getSnapshot()).toEqual({ action: 'rename', workspaceId: 'alpha', displayTitle: 'Alpha', storedTitle: 'alpha' })
   browser.settleWorkspaceAction()

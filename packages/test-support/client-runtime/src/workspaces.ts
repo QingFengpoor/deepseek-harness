@@ -68,16 +68,57 @@ export class TestWorkspaces implements IWorkspaces {
    * @param input - the Host create payload.
    * @returns the created Workspace view.
    */
-  async create(input: { path: string }): Promise<WorkspaceView> {
+  async create(input: { path?: string; paths?: readonly string[]; title?: string }): Promise<WorkspaceView> {
     this.calls.push({ method: 'create', args: [input] })
     const stub = this.stubs.get('create')
     if (stub !== undefined) return await (stub(input) as Promise<WorkspaceView>)
+    const path = input.path ?? input.paths?.[0] ?? ''
     return {
-      workspaceId: `ws-${input.path}` as WorkspaceId,
-      title: input.path,
-      path: input.path,
+      workspaceId: `ws-${path}` as WorkspaceId,
+      title: input.title ?? path,
+      path,
+      paths: input.paths ?? [path],
       sessionIds: [],
     } as unknown as WorkspaceView
+  }
+
+  /**
+   * Append a root (recorded). The default echoes a minimal view.
+   * @param workspaceId - target Workspace.
+   * @param path - appended root.
+   * @returns the updated view.
+   */
+  async addPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    this.calls.push({ method: 'addPath', args: [workspaceId, path] })
+    const stub = this.stubs.get('addPath')
+    if (stub !== undefined) return await (stub(workspaceId, path) as Promise<WorkspaceView>)
+    return { workspaceId, title: '', path, paths: [path], sessionIds: [] } as unknown as WorkspaceView
+  }
+
+  /**
+   * Remove a root (recorded). The default echoes a minimal view.
+   * @param workspaceId - target Workspace.
+   * @param path - removed root.
+   * @returns the updated view.
+   */
+  async removePath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    this.calls.push({ method: 'removePath', args: [workspaceId, path] })
+    const stub = this.stubs.get('removePath')
+    if (stub !== undefined) return await (stub(workspaceId, path) as Promise<WorkspaceView>)
+    return { workspaceId, title: '', path, paths: [path], sessionIds: [] } as unknown as WorkspaceView
+  }
+
+  /**
+   * Promote a root (recorded). The default echoes a minimal view.
+   * @param workspaceId - target Workspace.
+   * @param path - primary root.
+   * @returns the updated view.
+   */
+  async setPrimaryPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    this.calls.push({ method: 'setPrimaryPath', args: [workspaceId, path] })
+    const stub = this.stubs.get('setPrimaryPath')
+    if (stub !== undefined) return await (stub(workspaceId, path) as Promise<WorkspaceView>)
+    return { workspaceId, title: '', path, paths: [path], sessionIds: [] } as unknown as WorkspaceView
   }
 
   /**

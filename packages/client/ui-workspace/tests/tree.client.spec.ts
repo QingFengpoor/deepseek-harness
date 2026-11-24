@@ -11,7 +11,7 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SessionProjectionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   type ArchivedFilter,
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
+  isEphemeralCwd, deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, visibleSessionIds, workspaceLabel, UNGROUPED_KEY,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
@@ -75,7 +75,7 @@ const branchedList = (
   }
 }
 const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView => ({
-  workspaceId: wid(id), path: `/projects/${id}`, title,
+  workspaceId: wid(id), path: `/projects/${id}`, paths: [`/projects/${id}`], title,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
 const view = (expandedGroups: readonly string[] = [], ungroupedOrder?: readonly string[]) => ({
@@ -295,6 +295,49 @@ describe('deriveGroups', () => {
     )
     expect(groups.map(group => group.key)).toEqual(['first', UNGROUPED_KEY])
     expect(groups[1]!.sessions.map(session => session.id)).toEqual([sid('loose')])
+  })
+
+  it('hides Ungrouped Sessions that live in scratch space by default', () => {
+    const sessions = list(
+      summary('scratch', 5, '/tmp/probe'),
+      summary('root', 4, '/tmp'),
+      summary('run', 3, '/home/q/harness/runs/2026-11-19T000031'),
+      summary('kept', 2, '/home/q/project'),
+      summary('lookalike', 1, '/tmpfoo'),
+      summary('relative', 1, 'tmp/x'),
+    )
+    const groups = deriveGroups(
+      sessions, [], noRows, noAttention, view([UNGROUPED_KEY]),
+    )
+    expect(groups[0]!.sessions.map(session => session.id))
+      .toEqual([sid('kept'), sid('lookalike'), sid('relative')])
+  })
+
+  it('keeps scratch Sessions when the setting turns the filter off', () => {
+    const sessions = list(summary('scratch', 5, '/tmp/probe'), summary('kept', 2, '/home/q/project'))
+    const groups = deriveGroups(
+      sessions, [], noRows, noAttention,
+      { expandedGroups: [UNGROUPED_KEY], hideEphemeral: false },
+    )
+    expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('scratch'), sid('kept')])
+  })
+
+  it('never hides an accounted scratch Session behind a Workspace account', () => {
+    const sessions = list(summary('owned', 1, '/tmp/probe'))
+    const owned: WorkspaceView = {
+      ...workspace('scratch-ws', ['owned']), path: '/tmp/probe', paths: ['/tmp/probe'],
+    }
+    const groups = deriveGroups(sessions, [owned], noRows, noAttention, view(['scratch-ws']))
+    expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('owned')])
+  })
+
+  it('honors a custom temp root', () => {
+    const sessions = list(summary('custom', 2, '/var/tmp/x'), summary('plain-tmp', 1, '/tmp/y'))
+    const groups = deriveGroups(
+      sessions, [], noRows, noAttention,
+      { expandedGroups: [UNGROUPED_KEY], tmpdir: '/var/tmp' },
+    )
+    expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('plain-tmp')])
   })
 
   it('applies stored Ungrouped order and appends new loose Sessions by recency', () => {
@@ -961,4 +1004,62 @@ it('leaves unnamed history titles empty for locale-owned row labels', () => {
   item.displayTitle = 'Default workspace'
   const sessions = list(item)
   expect(deriveFlat(sessions, [item.id], noRows, noAttention)[0]?.title).toBe('')
+})
+
+
+describe('multi-root performance smoke', () => {
+  it('derives 20 roots and 100 Sessions within the browser budget', () => {
+    const roots = Array.from({ length: 20 }, (_, index) => `/perf/root-${index}`)
+    const sessions = Array.from({ length: 100 }, (_, index) =>
+      summary(`perf-${index}`, 1_000 + index, roots[index % roots.length]))
+    const multi: WorkspaceView = {
+      ...workspace('perf', sessions.map(session => session.id as string), 'Perf'),
+      path: roots[0]!,
+      paths: roots,
+    }
+    const started = performance.now()
+    const groups = deriveGroups(list(...sessions), [multi], noRows, noAttention, view(['perf']))
+    const elapsed = performance.now() - started
+
+    expect(groups[0]?.paths).toEqual(roots)
+    expect(groups[0]?.sessions).toHaveLength(100)
+    expect(elapsed).toBeLessThan(500)
+    console.log(`perf: deriveGroups 20 roots / 100 sessions = ${elapsed.toFixed(1)}ms`)
+  })
+})
+
+describe('isEphemeralCwd', () => {
+  it.each([
+    ['/tmp', true],
+    ['/tmp/probe', true],
+    ['/tmp/ai-shell/handoff-test', true],
+    ['/tmp/pytest-of-q/project', true],
+    ['/home/q/harness/runs/2026-11-19T000031', true],
+    ['/tmpfoo', false],
+    ['/home/q/project', false],
+    ['/home/q/project/runs', false],
+    ['tmp/x', false],
+    ['', false],
+  ])('%s -> %s', (cwd, want) => {
+    expect(isEphemeralCwd(cwd, '/tmp')).toBe(want)
+  })
+})
+
+describe('real store smoke', () => {
+  it('classifies every current Ungrouped cwd', () => {
+    const paths = [
+      '/tmp', '/tmp/ai-shell/handoff-test', '/tmp/night-release-probe',
+      '/tmp/pytest-of-qizhuo/pytest-49/test_approval_is_single_use_ac0/project-202611196953',
+      '/home/qizhuo/.local/state/dsh-nightly-digest/runs/2026-11-22T222918',
+      '/home/qizhuo/.local/share/agent-knowledge',
+      '/home/qizhuo/Code/dsh-web-desktop',
+      '/home/qizhuo/dsh-ideas/sandbox-context',
+    ]
+    const hidden = paths.filter(p => isEphemeralCwd(p, '/tmp'))
+    expect(hidden).toEqual([
+      '/tmp', '/tmp/ai-shell/handoff-test', '/tmp/night-release-probe',
+      '/tmp/pytest-of-qizhuo/pytest-49/test_approval_is_single_use_ac0/project-202611196953',
+      '/home/qizhuo/.local/state/dsh-nightly-digest/runs/2026-11-22T222918',
+    ])
+  })
 })

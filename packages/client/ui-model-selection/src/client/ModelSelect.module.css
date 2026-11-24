@@ -320,6 +320,20 @@
   text-overflow: ellipsis;
 }
 
+/* The provider suffix that tells a colliding model name apart. It only exists
+   while another provider advertises the same name, takes the caption tone so
+   the catalog name keeps the visual weight, and is the first thing a narrow
+   row or trigger gives up: inside `.badgedName` it shrinks before the fixed
+   badge, and the name keeps its own ellipsis. */
+.modelQualifier {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .badge {
   flex: none;
 }

@@ -1,4 +1,4 @@
-import { IconEditOutlineRegular, IconTrashOutlineRegular, IconPinFillRegular, IconPinOutlineRegular, IconUnarchiveOutlineRegular, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCopyOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFolderOpenRegular, IconEditOutlineRegular, IconTrashOutlineRegular, IconPinFillRegular, IconPinOutlineRegular, IconUnarchiveOutlineRegular, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCopyOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SessionMenu } from './session-actions/SessionMenu.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-context-menu/client'
 /**
@@ -151,9 +151,30 @@ export function apply(ctx: Context): void {
   const viewHandle = createWorkspaceViewStore()
   const viewInstance = viewHandle.create()
   const viewStore: typeof viewHandle = { ...viewHandle, create: () => viewInstance }
-  const rowToast = createSnapshotStore<RowToastState | null>(null)
+  // Notices queue instead of replacing one another: a burst of row actions
+  // (archive, pin, copy) must leave every failure readable, and each banner
+  // expires on its own hold rather than by the arrival of a later one.
+  const rowToast = createSnapshotStore<RowToastState[]>([])
   let toastSeq = 0
-  const notify = (toast: RowToast): void => { rowToast.set({ ...toast, seq: ++toastSeq }) }
+  const notify = (toast: RowToast): void => {
+    toastSeq += 1
+    rowToast.update((list) => {
+      // A follow-up for the same archive action updates that row's notice in
+      // place instead of stacking a second banner for one Session.
+      if (toast.kind === 'archived' || toast.kind === 'stoppedAndArchived') {
+        const at = list.findIndex(entry => (entry.kind === 'archived' || entry.kind === 'stoppedAndArchived')
+          && entry.sessionId === toast.sessionId)
+        if (at !== -1) { list[at] = { ...toast, seq: toastSeq }; return }
+      }
+      list.push({ ...toast, seq: toastSeq })
+    })
+  }
+  const dismissToast = (seq: number): void => {
+    rowToast.update((list) => {
+      const at = list.findIndex(entry => entry.seq === seq)
+      if (at !== -1) list.splice(at, 1)
+    })
+  }
   const uiWorkspace = new UiWorkspaceService(
     ctx, ctx.remote.directoryPicker, workspaces, sessions, viewInstance.actions, notify,
   )
@@ -303,15 +324,19 @@ export function apply(ctx: Context): void {
       openSession(sessionId)
     },
   }
-  registerToasts(ctx, viewStore, toastActions)
-  const rowToastInjected = (): Pick<RowToastInjected, 'hooks' | 'dismissToast'> => ({
+  const displays = registerToasts(ctx, viewStore, toastActions)
+  const rowToastInjected = (): Pick<RowToastInjected, 'hooks' | 'dismissToast' | 'displays'> => ({
     hooks: { toast: rowToast },
-    dismissToast: () => { rowToast.set(null) },
+    dismissToast,
+    displays,
   })
   const workspaceActionRequest = createSnapshotStore<WorkspaceActionRequest | null>(null)
-  const requestWorkspaceAction = (workspaceId: WorkspaceId, displayTitle: string, action: 'rename' | 'delete'): void => {
+  const requestWorkspaceAction = (workspaceId: WorkspaceId, displayTitle: string, action: 'rename' | 'delete' | 'roots'): void => {
     const workspace = workspaces.list.getSnapshot().items.find(row => row.workspaceId === workspaceId)
-    if (workspace === undefined || !ctx.remoteAccess.source('workspace', workspaceId, `workspace/${action}`).getSnapshot()) return
+    if (workspace === undefined) return
+    // The roots dialog only opens with an exact target; each mutation it offers
+    // still asks its own remote-access source, so the dialog itself gates nothing.
+    if (action !== 'roots' && !ctx.remoteAccess.source('workspace', workspaceId, `workspace/${action}`).getSnapshot()) return
     workspaceActionRequest.set({ action, workspaceId, displayTitle, storedTitle: workspace.title })
   }
   ctx.slots.inject('contextMenu.icon', function* () {
@@ -320,6 +345,7 @@ export function apply(ctx: Context): void {
       'workspace.pin': IconPinOutlineRegular, 'workspace.unpin': IconPinFillRegular,
       'workspace.archive': IconArchiveOutlineRegular, 'workspace.unarchive': IconUnarchiveOutlineRegular,
       'workspace.fork': IconBranchOutlineRegular, 'workspace.copy': IconCopyOutlineRegular,
+      'workspace.roots': IconFolderOpenRegular,
     })) yield ctx.slots.register({ name: 'contextMenu.icon', key }, Icon)
   })
   ctx.effect(() => ctx.contextMenus.register({
@@ -327,6 +353,19 @@ export function apply(ctx: Context): void {
     resolve: ({ workspaceId, displayTitle }) => ctx.remoteAccess.source('workspace', workspaceId, 'workspace/rename').getSnapshot()
       ? [{ id: 'rename', label: ctx.locale.bind(NS)('rename'), icon: { key: 'workspace.rename' }, run: () => { requestWorkspaceAction(workspaceId, displayTitle, 'rename') } }] : [],
   }), 'workspace: rename menu action')
+  ctx.effect(() => ctx.contextMenus.register({
+    id: 'workspace.roots', target: 'workspace', order: 150,
+    resolve: ({ workspaceId, displayTitle }) => {
+      // The dialog's three mutations each ask their own endpoint; offering the
+      // entry needs at least one of them granted, or the dialog opens empty.
+      const manageable = ['workspace/addPath', 'workspace/removePath', 'workspace/setPrimaryPath']
+        .some(endpoint => ctx.remoteAccess.source('workspace', workspaceId, endpoint).getSnapshot())
+      return manageable ? [{
+        id: 'manage-roots', label: ctx.locale.bind(NS)('roots.manage'), icon: { key: 'workspace.roots' },
+        run: () => { requestWorkspaceAction(workspaceId, displayTitle, 'roots') },
+      }] : []
+    },
+  }), 'workspace: manage roots menu action')
   ctx.effect(() => ctx.contextMenus.register({
     id: 'workspace.delete', target: 'workspace', order: 300,
     resolve: ({ workspaceId, displayTitle }) => ctx.remoteAccess.source('workspace', workspaceId, 'workspace/delete').getSnapshot()
@@ -345,11 +384,15 @@ export function apply(ctx: Context): void {
     notifyArchivedNotOpenable: () => { notify({ kind: 'archivedNotOpenable' }) },
     renameWorkspace: async (workspaceId, title) => { await workspaces.rename(workspaceId, title) },
     deleteWorkspace: async (workspaceId) => { await workspaces.delete(workspaceId) },
+    addPath: async (workspaceId, path) => workspaces.addPath(workspaceId, path),
+    removePath: async (workspaceId, path) => workspaces.removePath(workspaceId, path),
+    setPrimaryPath: async (workspaceId, path) => workspaces.setPrimaryPath(workspaceId, path),
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
     unarchiveSession: async (sessionId) => { await uiWorkspace.unarchiveSession(sessionId) },
     createWorkspace: input => workspaces.create(input),
+    pickDirectory: () => uiWorkspace.pickDirectory(),
     requestSearch: shortcutControls.search,
     requestAddWorkspace: shortcutControls.add,
     closeAddWorkspace: shortcutControls.closeAdd,
@@ -402,8 +445,7 @@ export function apply(ctx: Context): void {
       name: 'shell.overlay', id: 'workspace.session-archive', locale: NS, inject: archiveConfirmInjected,
     }, SessionArchiveConfirmDialog)
     yield ctx.slots.register({
-      name: 'shell.overlay', id: 'workspace.row-toast', inject: rowToastInjected,
-      children: { 'workspace.toast': { kind: 'keyed', scope: 'root' } },
+      name: 'shell.overlay', id: 'workspace.row-toast', locale: NS, inject: rowToastInjected,
     }, RowActionToast)
   })
   ctx.slots.inject('conversation.hero.workspace', () => ctx.slots.register(

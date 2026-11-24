@@ -11,10 +11,11 @@ import { en, ja, es, fr, de, ru, pt, zh } from '../src/client/locales.ts'
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
-function mount(state: OpenInAppToastState | null, dictionary: typeof en | typeof zh = en) {
+function mount(state: OpenInAppToastState | readonly OpenInAppToastState[] | null, dictionary: typeof en | typeof zh = en) {
   const dismiss = vi.fn()
+  const entries = state === null ? [] : Array.isArray(state) ? state : [state]
   const props = {
-    useToast: <T,>(select: (value: OpenInAppToastState | null) => T): T => select(state),
+    useToast: <T,>(select: (value: readonly OpenInAppToastState[]) => T): T => select(entries),
     dismiss,
     t: makeTranslate(dictionary),
   } as OpenInAppToastProps
@@ -38,30 +39,42 @@ describe('open-in-app toast source', () => {
     const source = createOpenInAppToastSource()
     const listener = vi.fn()
     const stop = source.hooks.toast.subscribe(listener)
-    expect(source.hooks.toast.getSnapshot()).toBeNull()
+    expect(source.hooks.toast.getSnapshot()).toEqual([])
 
     source.report({ kind: 'skipped' })
     expect(listener).not.toHaveBeenCalled()
-    expect(source.hooks.toast.getSnapshot()).toBeNull()
+    expect(source.hooks.toast.getSnapshot()).toEqual([])
 
     source.report({ kind: 'opened' })
-    expect(source.hooks.toast.getSnapshot()).toEqual(mobile ? { kind: 'opened', seq: 1 } : null)
+    expect(source.hooks.toast.getSnapshot()).toEqual(mobile ? [{ kind: 'opened', seq: 1 }] : [])
     source.report({ kind: 'revealed' })
-    expect(source.hooks.toast.getSnapshot()).toEqual(mobile ? { kind: 'revealed', seq: 2 } : null)
+    expect(source.hooks.toast.getSnapshot()).toEqual(mobile
+      ? [{ kind: 'opened', seq: 1 }, { kind: 'revealed', seq: 2 }]
+      : [])
     const previous = source.hooks.toast.getSnapshot()
     source.report({ kind: 'skipped' })
     expect(source.hooks.toast.getSnapshot()).toBe(previous)
 
     source.report({ kind: 'failed', failure: 'openError' })
-    expect(source.hooks.toast.getSnapshot()).toEqual({ kind: 'failed', failure: 'openError', seq: mobile ? 3 : 1 })
+    expect(source.hooks.toast.getSnapshot()).toEqual(mobile
+      ? [{ kind: 'opened', seq: 1 }, { kind: 'revealed', seq: 2 }, { kind: 'failed', failure: 'openError', seq: 3 }]
+      : [{ kind: 'failed', failure: 'openError', seq: 1 }])
     source.report({ kind: 'failed', failure: 'revealError' })
-    expect(source.hooks.toast.getSnapshot()).toEqual({ kind: 'failed', failure: 'revealError', seq: mobile ? 4 : 2 })
+    expect(source.hooks.toast.getSnapshot()).toEqual(mobile
+      ? [{ kind: 'opened', seq: 1 }, { kind: 'revealed', seq: 2 }, { kind: 'failed', failure: 'openError', seq: 3 }, { kind: 'failed', failure: 'revealError', seq: 4 }]
+      : [{ kind: 'failed', failure: 'openError', seq: 1 }, { kind: 'failed', failure: 'revealError', seq: 2 }])
     if (!mobile) {
       source.report({ kind: 'opened' })
-      expect(source.hooks.toast.getSnapshot()).toEqual({ kind: 'failed', failure: 'revealError', seq: 2 })
+      expect(source.hooks.toast.getSnapshot()).toEqual([
+        { kind: 'failed', failure: 'openError', seq: 1 },
+        { kind: 'failed', failure: 'revealError', seq: 2 },
+      ])
     }
-    source.dismiss()
-    expect(source.hooks.toast.getSnapshot()).toBeNull()
+    const before = source.hooks.toast.getSnapshot()
+    const first = before[0]!.seq
+    source.dismiss(first)
+    expect(source.hooks.toast.getSnapshot()).toEqual(before.filter(item => item.seq !== first))
+    expect(source.hooks.toast.getSnapshot().length).toBe(before.length - 1)
     expect(listener).toHaveBeenCalledTimes(mobile ? 5 : 3)
 
     stop()
@@ -81,7 +94,14 @@ describe('OpenInAppToast', () => {
     const { dismiss } = mount({ kind: 'opened', seq: 1 })
     expect(screen.getByRole('alert').textContent).toBe('Opened on another device')
     act(() => { vi.runAllTimers() })
-    expect(dismiss).toHaveBeenCalledOnce()
+    expect(dismiss).toHaveBeenCalledWith(1)
+  })
+
+  it('stacks simultaneous notices instead of replacing one another', () => {
+    mount([{ kind: 'opened', seq: 1 }, { kind: 'failed', failure: 'openError', seq: 2 }])
+    const alerts = screen.getAllByRole('alert')
+    expect(alerts).toHaveLength(2)
+    expect(alerts.map(node => node.textContent)).toEqual([en['path.openError'], en['path.opened']])
   })
 
   it('shows the other-device confirmation in Chinese', () => {

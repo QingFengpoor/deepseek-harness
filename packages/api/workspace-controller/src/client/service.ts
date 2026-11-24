@@ -48,11 +48,32 @@ export interface IWorkspaces {
   /** Host-authoritative Workspace rows, order, archive set, and follow lifecycle. */
   readonly list: WorkspaceSource
   /**
-   * Register an existing path as a Workspace.
-   * @param input - Host create payload.
+   * Register existing paths as a Workspace.
+   * @param input - Host create payload (`paths` multi-root, `path` compatibility, optional title).
    * @returns the created or idempotently resolved Workspace.
    */
-  create(input: { path: string }): Promise<WorkspaceView>
+  create(input: { path?: string; paths?: readonly string[]; title?: string }): Promise<WorkspaceView>
+  /**
+   * Append one existing directory as another root.
+   * @param workspaceId - target Workspace.
+   * @param path - existing absolute directory.
+   * @returns the updated Workspace.
+   */
+  addPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView>
+  /**
+   * Remove one root; the last root is refused.
+   * @param workspaceId - target Workspace.
+   * @param path - owned root path.
+   * @returns the updated Workspace.
+   */
+  removePath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView>
+  /**
+   * Promote one owned root to primary.
+   * @param workspaceId - target Workspace.
+   * @param path - owned root path.
+   * @returns the updated Workspace.
+   */
+  setPrimaryPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView>
   /**
    * Initialize or reuse the default Workspace.
    * @param signal - caller lifetime.
@@ -127,9 +148,27 @@ export class WorkspaceController extends Service implements IWorkspaces {
     this.list = model
   }
 
-  async create(input: { path: string }): Promise<WorkspaceView> {
+  async create(input: { path?: string; paths?: readonly string[]; title?: string }): Promise<WorkspaceView> {
     const result = await this.model.create(input)
     if (!result.ok) throw new WorkspaceCreateError(result.error)
+    return result.value.workspace
+  }
+
+  async addPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    const result = await this.model.addPath(workspaceId, path)
+    if (!result.ok) throw commandError('add root', result.error)
+    return result.value.workspace
+  }
+
+  async removePath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    const result = await this.model.removePath(workspaceId, path)
+    if (!result.ok) throw commandError('remove root', result.error)
+    return result.value.workspace
+  }
+
+  async setPrimaryPath(workspaceId: WorkspaceId, path: string): Promise<WorkspaceView> {
+    const result = await this.model.setPrimaryPath(workspaceId, path)
+    if (!result.ok) throw commandError('set primary root', result.error)
     return result.value.workspace
   }
 

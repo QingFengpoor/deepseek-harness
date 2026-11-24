@@ -39,7 +39,7 @@ const workspaces: WorkspaceSnapshot = {
 }
 function workspace(path: string, title: string): WorkspaceSnapshot['items'][number] {
   return {
-    workspaceId: `workspace:${title}` as WorkspaceId, path, title, sessionIds: [], createdAt: task.createdAt ?? '', updatedAt: task.updatedAt ?? '',
+    workspaceId: `workspace:${title}` as WorkspaceId, path, paths: [path], title, sessionIds: [], createdAt: task.createdAt ?? '', updatedAt: task.updatedAt ?? '',
   }
 }
 const registered: WorkspaceSnapshot = {

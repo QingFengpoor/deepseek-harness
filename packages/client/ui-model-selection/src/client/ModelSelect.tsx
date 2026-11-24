@@ -43,6 +43,7 @@ import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/d
 import type { ModelLabelOwner, ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'
+import { providerQualifiers } from './provider-label.ts'
 
 /** Which pane the dropdown shows: the two-row root or one drilled-in list. */
 type Pane = 'root' | 'model' | 'effort'
@@ -100,6 +101,13 @@ export function ModelSelect(
       name: group.id === 'deepseek-account' ? accountProviderName : group.name,
     },
   })), [state.groups, accountProviderName])
+  // Only providers whose model names collide with another provider's names
+  // need naming: the rows already sit under one provider heading.
+  const qualifiers = useMemo(() => providerQualifiers(groups.map(group => ({
+    id: group.id,
+    name: group.provider.name,
+    models: group.models,
+  }))), [groups])
   const choices = useMemo(() => groups.flatMap(group =>
     group.models.map(model => ({
       group,
@@ -397,32 +405,50 @@ export function ModelSelect(
     ? t('trigger.loading')
     : currentChoice?.model.name
       ?? t('trigger.fallback')
-  const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`
+  // `modelLabel` feeds the accessible name and tooltip; the visible trigger
+  // paints the provider as its own quiet segment (see .modelQualifier) so the
+  // middle dot means "model · provider" and never collides with the effort
+  // caption beside it. The trigger names the provider whenever the selection
+  // is known, not only on a catalog name collision: once the menu is closed,
+  // no provider heading is on screen to say which route the Session uses.
+  const currentProviderName = currentChoice?.group.provider.name
+  const ariaModel = currentProviderName === undefined ? modelLabel : `${modelLabel} · ${currentProviderName}`
+  const triggerLabel = effortLabel === undefined ? ariaModel : `${ariaModel} · ${effortLabel}`
   const triggerAria = waiting
     ? t('trigger.loading')
     : currentChoice === undefined
       ? t('trigger.selectAria')
       : effortLabel === undefined
-        ? t('trigger.aria', { model: modelLabel })
-        : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+        ? t('trigger.aria', { model: ariaModel })
+        : t('trigger.ariaEffort', { model: ariaModel, effort: effortLabel })
   const renderModelLabel = (
     provider: ModelLabelOwner['provider'], model: ModelLabelOwner['model'],
     placement: ModelLabelOwner['placement'], selected: boolean,
-  ) => (
-    <span data-provider-id={provider.id} data-model-id={model.id}>
-      {renderSlot('conversation.input.model.label', {
-        provider, model, placement, selected,
-      }, {
-        fallback: model.badge === undefined ? model.name : (
-          <span className={css.badgedName}>
-            {placement === 'trigger' ? <><Tag className={css.badge} tone={model.badge.tone}>{resolveText(model.badge.text)}</Tag>{' '}</> : null}
-            <span className={css.badgedNameText}>{model.name}</span>
-            {placement === 'trigger' ? null : <>{' '}<Tag className={css.badge} tone={model.badge.tone}>{resolveText(model.badge.text)}</Tag></>}
-          </span>
-        ),
-      })}
-    </span>
-  )
+  ) => {
+    // A contribution owns the whole label; the built-in one appends the
+    // provider after the name and before the badge in every placement. Rows
+    // name their provider only on a catalog name collision (the heading above
+    // them already does); the trigger always does, because it stands alone.
+    const suffix = placement === 'trigger' ? provider.name : qualifiers.get(provider.id)
+    const qualifier = suffix === undefined ? null
+      : <>{' '}<span className={css.modelQualifier}>{`· ${suffix}`}</span></>
+    return (
+      <span data-provider-id={provider.id} data-model-id={model.id}>
+        {renderSlot('conversation.input.model.label', {
+          provider, model, placement, selected,
+        }, {
+          fallback: model.badge === undefined ? <>{model.name}{qualifier}</> : (
+            <span className={css.badgedName}>
+              {placement === 'trigger' ? <><Tag className={css.badge} tone={model.badge.tone}>{resolveText(model.badge.text)}</Tag>{' '}</> : null}
+              <span className={css.badgedNameText}>{model.name}</span>
+              {qualifier}
+              {placement === 'trigger' ? null : <>{' '}<Tag className={css.badge} tone={model.badge.tone}>{resolveText(model.badge.text)}</Tag></>}
+            </span>
+          ),
+        })}
+      </span>
+    )
+  }
   let itemIndex = 0
   let modelIndex = 0
   const itemRef = () => {
@@ -591,7 +617,7 @@ export function ModelSelect(
                               else itemRefs.current[index]?.focus()
                             }}
                             key={model.id}
-                            title={model.name}
+                            title={qualifiers.has(group.id) ? `${model.name} · ${qualifiers.get(group.id)}` : model.name}
                             disabled={busy}
                             onClick={() => { choose({ provider: group.id, model: model.id }) }}
                           >

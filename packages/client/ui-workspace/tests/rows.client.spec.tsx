@@ -107,7 +107,7 @@ describe('Workspace and Session hover handoff', () => {
     vi.useFakeTimers()
     try {
       const workspace = (key: string): GroupNode => ({
-        key, workspaceId: wid(key), cwd: `/projects/${key}`, createdAt: 0, label: key,
+        key, workspaceId: wid(key), cwd: `/projects/${key}`, paths: [`/projects/${key}`], createdAt: 0, label: key,
         sessionCount: 0, expanded: true, containsCurrent: false, sessions: [],
       })
       const session: SessionNode = {
@@ -170,7 +170,7 @@ describe('native row drag previews', () => {
     const drag = dragProps()
     const view = render(kind === 'workspace'
       ? <ProjectRowItem group={{
-        key: 'workspace', workspaceId: wid('workspace'), cwd: '/workspace', createdAt: 0,
+        key: 'workspace', workspaceId: wid('workspace'), cwd: '/workspace', paths: ['/workspace'], createdAt: 0,
         label: 'Draggable row', sessionCount: 0, expanded: true, containsCurrent: false, sessions: [],
       }} onToggle={vi.fn()} onCreate={vi.fn()} drag={drag} t={t} />
       : <SessionNodeItem node={{
@@ -344,7 +344,7 @@ describe('workspace browser rows', () => {
     const onToggle = vi.fn()
     const onCreate = vi.fn()
     const group: GroupNode = {
-      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
       sessionCount: 1, expanded: true, containsCurrent: true, sessions: [],
     }
     render(<ProjectRowItem group={group} onToggle={onToggle} onCreate={onCreate} t={t}
@@ -359,6 +359,87 @@ describe('workspace browser rows', () => {
     expect(onToggle).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText('Project'))
     expect(onToggle).toHaveBeenCalledOnce()
+  })
+
+  it('starts a multi-root Workspace session in the primary root without a menu', () => {
+    const onCreate = vi.fn()
+    const group: GroupNode = {
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project',
+      paths: ['/projects/project', '/projects/lib', '/projects/admin'], createdAt: 0, label: 'Project',
+      sessionCount: 0, expanded: true, containsCurrent: false, sessions: [],
+    }
+    render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={onCreate} t={t} />)
+
+    const create = screen.getByRole('button', { name: '在“Project”中新建会话' })
+    expect(create.hasAttribute('aria-haspopup')).toBe(false)
+    fireEvent.click(create)
+    expect(onCreate).toHaveBeenCalledOnce()
+    expect(onCreate.mock.calls[0]).toEqual([])
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('opens the root menu from the chevron and starts in the chosen root', () => {
+    const onCreate = vi.fn()
+    const group: GroupNode = {
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project',
+      paths: ['/projects/project', '/projects/lib', '/projects/admin'], createdAt: 0, label: 'Project',
+      sessionCount: 0, expanded: true, containsCurrent: false, sessions: [],
+    }
+    render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={onCreate} t={t} />)
+
+    const chevron = screen.getByRole('button', { name: '在“Project”中选择根目录并新建会话' })
+    expect(chevron.getAttribute('aria-haspopup')).toBe('menu')
+    expect(chevron.getAttribute('aria-expanded')).toBe('false')
+    expect(onCreate).not.toHaveBeenCalled()
+
+    fireEvent.click(chevron)
+    expect(chevron.getAttribute('aria-expanded')).toBe('true')
+    const items = screen.getAllByRole('menuitem')
+    expect(items).toHaveLength(3)
+    // Primary root first and marked; the other roots keep their basenames.
+    expect(items[0]?.textContent).toBe('project主根')
+    expect(items[1]?.textContent).toBe('lib')
+    expect(items[2]?.textContent).toBe('admin')
+
+    fireEvent.click(items[1] as HTMLElement)
+    expect(onCreate).toHaveBeenCalledWith('/projects/lib')
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('closes the root menu on Escape without creating a session', () => {
+    const onCreate = vi.fn()
+    const group: GroupNode = {
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project',
+      paths: ['/projects/project', '/projects/lib'], createdAt: 0, label: 'Project',
+      sessionCount: 0, expanded: true, containsCurrent: false, sessions: [],
+    }
+    render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={onCreate} t={t} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '在“Project”中选择根目录并新建会话' }))
+    expect(screen.getByRole('menu')).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it('keeps the row actions pinned while the root menu is open', () => {
+    const group: GroupNode = {
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project',
+      paths: ['/projects/project', '/projects/lib'], createdAt: 0, label: 'Project',
+      sessionCount: 0, expanded: true, containsCurrent: false, sessions: [],
+    }
+    render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
+
+    const row = screen.getByRole('treeitem')
+    expect(row.className).not.toContain('menuOpen')
+    const chevron = screen.getByRole('button', { name: '在“Project”中选择根目录并新建会话' })
+    // The anchor never hides behind a hover tooltip: the menu portal would
+    // otherwise lose its rect and fall back to the window origin.
+    expect(chevron.getAttribute('title')).toBe('选择根目录并新建会话')
+    fireEvent.click(chevron)
+    expect(row.className).toContain('menuOpen')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(row.className).not.toContain('menuOpen')
   })
 
   it('renders and opens a selected running Session row', () => {
@@ -662,7 +743,7 @@ describe('workspace browser rows', () => {
     const openMenu = vi.fn(), onToggle = vi.fn()
     const renderFactorySlot = vi.fn(renderMenuButton)
     const group: GroupNode = {
-      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
       sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
     }
     const target = { kind: 'workspace', value: { workspaceId: wid('project'), path: '/projects/project', displayTitle: 'Project' } } as const
@@ -681,7 +762,7 @@ describe('workspace browser rows', () => {
 
   it('workspace row offers only the actions its Workspace access snapshot allows', () => {
     const group: GroupNode = {
-      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
       sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
     }
     const allowed = new Set<string>(['workspace/rename'])
@@ -707,12 +788,12 @@ describe('workspace browser rows', () => {
     view.rerender(<ProjectRowItem {...props} useWorkspaceAccess={useWorkspaceAccess} />)
     expect(screen.getByRole('treeitem').getAttribute('draggable')).toBe('true')
     fireEvent.click(screen.getByRole('button', { name: '在“Project”中新建会话' }))
-    expect(props.onCreate).toHaveBeenCalledExactlyOnceWith(props.group.workspaceId)
+    expect(props.onCreate).toHaveBeenCalledOnce()
   })
 
   it('ungrouped bucket offers no New Session and asks no access', () => {
     const group: GroupNode = {
-      key: 'ungrouped', workspaceId: undefined, cwd: undefined, createdAt: undefined, label: '',
+      key: 'ungrouped', workspaceId: undefined, cwd: undefined, paths: [], createdAt: undefined, label: '',
       sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
     }
     const useWorkspaceAccess = vi.fn(() => true)
@@ -755,7 +836,7 @@ describe('workspace browser rows', () => {
     const restoreClipboard = installClipboard(writeText)
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -778,7 +859,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -811,7 +892,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/projects/project', paths: ['/projects/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -837,7 +918,7 @@ describe('workspace browser rows', () => {
     const restoreClipboard = installClipboard(writeText)
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: '/home/u/Documents/project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: '/home/u/Documents/project', paths: ['/home/u/Documents/project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} home="/home/u" onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -857,7 +938,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: undefined, createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: undefined, paths: [], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} home="/home/u" onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -875,7 +956,7 @@ describe('workspace browser rows', () => {
     vi.useFakeTimers()
     try {
       const group: GroupNode = {
-        key: 'project', workspaceId: wid('project'), cwd: 'C:\\Users\\u\\project', createdAt: 0, label: 'Project',
+        key: 'project', workspaceId: wid('project'), cwd: 'C:\\Users\\u\\project', paths: ['C:\\Users\\u\\project'], createdAt: 0, label: 'Project',
         sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
       }
       render(<ProjectRowItem group={group} home="C:\\Users\\u" onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
@@ -889,7 +970,7 @@ describe('workspace browser rows', () => {
 
   it('ungrouped bucket renders no workspace menu', () => {
     const group: GroupNode = {
-      key: '', workspaceId: undefined, cwd: undefined, createdAt: undefined, label: 'Ungrouped',
+      key: '', workspaceId: undefined, cwd: undefined, paths: [], createdAt: undefined, label: 'Ungrouped',
       sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
     }
     render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)

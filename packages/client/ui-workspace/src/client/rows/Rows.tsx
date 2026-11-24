@@ -9,15 +9,15 @@
  * `sidebar.workspaces.session.row.action` list. Session and Workspace
  * hover cards are suppressed while their menu is open.
  */
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent, RefObject } from 'react'
 import clsx from 'clsx'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  HoverCard, IconArchiveOutlineRegular,
+  HoverCard, IconArchiveOutlineRegular, IconChevronDownOutlineRegular,
   IconFolderCloseRegular, IconFolderOpenRegular,
   IconNewChatOutlineRegular, IconPinFillRegular,
-  IconTriangleRightFillRegular, IconUnarchiveOutlineRegular, relativeTime, StateDot, Tooltip, useRowDragPreview,
+  IconTriangleRightFillRegular, IconUnarchiveOutlineRegular, Menu, relativeTime, StateDot, Tooltip, useRowDragPreview,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -25,6 +25,7 @@ import { abbreviateHomePath } from '@deepseek-ai/dsh-util-workspace-path'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
+import { workspaceLabel } from '../tree.ts'
 import css from './Rows.module.css'
 
 /** Sidebar-owned layout values needed by row copies mounted outside the sidebar. */
@@ -223,7 +224,7 @@ type ProjectRowItemProps = {
   newShortcut?: ShortcutCatalogEntry | undefined
   containsCurrentDescendant?: boolean
   onToggle: () => void
-  onCreate: (workspaceId: WorkspaceId) => void
+  onCreate: (rootPath?: string) => void
   /** Present only for real Workspace rows in the grouped view. */
   drag?: WorkspaceRowDragProps | undefined
   /** Host account home; POSIX home-rooted hover paths display as `~`. */
@@ -233,7 +234,7 @@ type ProjectRowItemProps = {
 
 /** The header actions one row offers; an absent create offers no New Session button. */
 interface ProjectRowActions {
-  readonly create?: (() => void) | undefined
+  readonly create?: ((rootPath?: string) => void) | undefined
   readonly reorder: boolean
 }
 
@@ -271,7 +272,9 @@ function WorkspaceProjectRow({ workspaceId, ...props }: ProjectRowItemProps & { 
   const { useWorkspaceAccess } = props
   const create = useWorkspaceAccess(workspaceId, 'session/create')
   const actions: ProjectRowActions = {
-    create: create ? () => { props.onCreate(workspaceId) } : undefined,
+    create: create
+      ? (rootPath?: string) => { if (rootPath === undefined) props.onCreate(); else props.onCreate(rootPath) }
+      : undefined,
     reorder: useWorkspaceAccess(workspaceId, 'workspace/insertBefore'),
   }
   return <ProjectRow {...props} actions={actions} />
@@ -292,9 +295,32 @@ function ProjectRow({
   const dragPreview = useRowDragPreview(css.dragPreview as string, DRAG_PREVIEW_PROPERTIES)
   const workspaceMenuTarget = row.workspaceId !== undefined && row.cwd !== undefined
     ? { workspaceId: row.workspaceId, path: row.cwd } : undefined
+  const [rootMenuOpen, setRootMenuOpen] = useState(false)
+  // Older snapshots and the ungrouped bucket carry no `paths`: the cwd is the
+  // one root, so the per-root menu and the root count stay hidden.
+  const paths = row.paths ?? (row.cwd === undefined ? [] : [row.cwd])
+  const rootItems = useMemo(() => {
+    const labels = paths.map(path => workspaceLabel(path))
+    const counts = new Map<string, number>()
+    for (const rootLabel of labels) counts.set(rootLabel, (counts.get(rootLabel) ?? 0) + 1)
+    return paths.map((path, index) => {
+      const rootLabel = labels[index] as string
+      return {
+        id: path,
+        label: (
+          <span className={css.rootItemLabel}>
+            <span className={css.rootItemName}>
+              {(counts.get(rootLabel) ?? 0) > 1 ? `${rootLabel} — ${path}` : rootLabel}
+            </span>
+            {index === 0 && <span className={css.primaryBadge}>{t('roots.primary')}</span>}
+          </span>
+        ),
+      }
+    })
+  }, [paths, t])
   const ownRow = (
     <div
-      className={clsx(css.projectRow, menuOpen && css.menuOpen)}
+      className={clsx(css.projectRow, (menuOpen || rootMenuOpen) && css.menuOpen)}
       data-row-key={`workspace:${group.key}`}
       role="treeitem"
       aria-expanded={row.expanded}
@@ -318,7 +344,18 @@ function ProjectRow({
         <IconTriangleRightFillRegular className={clsx(css.arrow, row.expanded && css.arrowOpen)} />
       </span>
       <span className={css.projectText}>
-        <span className={css.title}>{label}</span>
+        <span className={css.projectTitleRow}>
+          <span className={css.title}>{label}</span>
+          {paths.length > 1 && (
+            <span
+              className={css.rootCount}
+              title={paths.join('\n')}
+              aria-label={t('roots.count', { n: paths.length })}
+            >
+              {paths.length}
+            </span>
+          )}
+        </span>
       </span>
       <span className={css.rowActions}>
         {workspaceMenuTarget !== undefined && (
@@ -329,17 +366,44 @@ function ProjectRow({
           })
         )}
         {create !== undefined && (
-          <Tooltip label={t('actions.newSession')} shortcutKeys={newShortcut?.keys} side="bottom" align="end" delayMs={500} portal>
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-keyshortcuts={newShortcut?.aria}
-              aria-label={t('actions.newSession.aria', { name: label })}
-              onClick={(e) => { e.stopPropagation(); create() }}
-            >
-              <IconNewChatOutlineRegular size={14} />
-            </button>
-          </Tooltip>
+          <span className={css.newSessionActions}>
+            <Tooltip label={t('actions.newSession')} shortcutKeys={newShortcut?.keys} side="bottom" align="end" delayMs={500} portal>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-keyshortcuts={newShortcut?.aria}
+                aria-label={t('actions.newSession.aria', { name: label })}
+                onClick={(e) => { e.stopPropagation(); create() }}
+              >
+                <IconNewChatOutlineRegular size={14} />
+              </button>
+            </Tooltip>
+            {paths.length > 1 && (
+              <Menu
+                open={rootMenuOpen}
+                onClose={() => { setRootMenuOpen(false) }}
+                items={rootItems}
+                onSelect={(path) => {
+                  setRootMenuOpen(false)
+                  create(path)
+                }}
+                portal
+                anchor={(
+                  <button
+                    type="button"
+                    className={css.iconButton}
+                    aria-label={t('actions.newSession.chooseRootAria', { name: label })}
+                    title={t('actions.newSession.chooseRoot')}
+                    aria-haspopup="menu"
+                    aria-expanded={rootMenuOpen}
+                    onClick={(e) => { e.stopPropagation(); setRootMenuOpen(v => !v) }}
+                  >
+                    <IconChevronDownOutlineRegular size={12} />
+                  </button>
+                )}
+              />
+            )}
+          </span>
         )}
       </span>
     </div>
@@ -357,7 +421,7 @@ function ProjectRow({
       />}
       openDelayMs={800}
       grouped
-      disabled={menuOpen}
+      disabled={menuOpen || rootMenuOpen}
       copyText={row.cwd}
       copyLabel={t('copy')}
       copiedLabel={t('hover.copied')}

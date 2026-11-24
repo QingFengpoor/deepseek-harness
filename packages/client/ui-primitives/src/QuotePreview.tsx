@@ -6,10 +6,13 @@ import { IconCloseOutlineRegular } from './icons/index.tsx'
 import { HoverCard } from './HoverCard.tsx'
 import css from './QuotePreview.module.css'
 
-function QuoteMarkIcon({ className }: { readonly className?: string | undefined }) {
+function QuoteMarkIcon({ className, closing = false }: {
+  readonly className?: string | undefined
+  readonly closing?: boolean | undefined
+}) {
   return (
     <svg width={16} height={16} className={className} viewBox="0 0 16 16" fill="none" aria-hidden>
-      <g transform="translate(6.8 2.4)">
+      <g transform={closing ? 'translate(6.8 2.4) rotate(180 4 3.625)' : 'translate(6.8 2.4)'}>
         <path d="M2.8125 0.583008L3.2002 1.16602C2.43912 1.6713 1.88491 2.41238 1.60547 3.25684H2.98926V6.70605H0V4.52148C1.96593e-05 2.70313 0.9109 1.00575 2.42578 0L2.8125 0.583008Z" fill="currentColor" />
         <path d="M7.50781 0.583008L7.89551 1.16602C7.13443 1.6713 6.58022 2.41238 6.30078 3.25684H7.68457V6.70605H4.69531V4.52148C4.69533 2.70313 5.60621 1.00575 7.12109 0L7.50781 0.583008Z" fill="currentColor" />
       </g>
@@ -81,25 +84,9 @@ export function QuotePreview({ text, summary, removal }: QuotePreviewProps): JSX
       data-quote-preview=""
       data-removable={removal === undefined ? undefined : ''}
     >
-      {removal === undefined
-        ? (
-          <span className={css.marker} aria-hidden>
-            <QuoteMarkIcon className={css.quoteMark} />
-          </span>
-        )
-        : (
-          <button
-            type="button"
-            className={css.remove}
-            aria-label={removal.label}
-            onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}
-            onKeyDown={(event) => { event.stopPropagation() }}
-            onClick={remove}
-          >
-            <QuoteMarkIcon className={css.quoteMark} />
-            <IconCloseOutlineRegular size={12} className={css.closeMark} />
-          </button>
-        )}
+      <span className={css.marker} data-quote-mark="opening" aria-hidden>
+        <QuoteMarkIcon className={css.quoteMark} />
+      </span>
       <span ref={sourceRef} className={css.source} data-quote-preview-text="">
         {summary === undefined ? text : (
           <>
@@ -109,6 +96,21 @@ export function QuotePreview({ text, summary, removal }: QuotePreviewProps): JSX
           </>
         )}
       </span>
+      <span className={css.marker} data-quote-mark="closing" aria-hidden>
+        <QuoteMarkIcon closing className={css.quoteMark} />
+      </span>
+      {removal !== undefined && (
+        <button
+          type="button"
+          className={css.remove}
+          aria-label={removal.label}
+          onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}
+          onKeyDown={(event) => { event.stopPropagation() }}
+          onClick={remove}
+        >
+          <IconCloseOutlineRegular size={12} />
+        </button>
+      )}
     </span>
   )
   return (

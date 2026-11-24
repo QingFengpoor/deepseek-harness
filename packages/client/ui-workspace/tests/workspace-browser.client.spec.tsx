@@ -69,7 +69,7 @@ const sessionState = (
   }
 }
 const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView => ({
-  workspaceId: wid(id), path: `/projects/${id}`, title,
+  workspaceId: wid(id), path: `/projects/${id}`, paths: [`/projects/${id}`], title,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
 const workspaceState = (
@@ -147,6 +147,10 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     notifyArchivedNotOpenable: vi.fn(),
     renameWorkspace: vi.fn(async () => {}),
     deleteWorkspace: vi.fn(async () => {}),
+    addPath: vi.fn(async () => workspace('created', [])),
+    removePath: vi.fn(async () => workspace('created', [])),
+    setPrimaryPath: vi.fn(async () => workspace('created', [])),
+    pickDirectory: vi.fn(async () => null),
     unarchiveSession: vi.fn(async () => {}),
     insertWorkspaceBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
@@ -158,7 +162,7 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     ...overrides,
   }
   const view = render(<WorkspaceBrowser {...props} />)
-  return { view, props, store, controls, openDialog: (workspaceId: WorkspaceId, displayTitle: string, action: 'rename' | 'delete') => {
+  return { view, props, store, controls, openDialog: (workspaceId: WorkspaceId, displayTitle: string, action: 'rename' | 'delete' | 'roots') => {
     const storedTitle = props.useWorkspaces(state => state.items.find(row => row.workspaceId === workspaceId)?.title ?? displayTitle)
     act(() => { request.set({ action, workspaceId, displayTitle, storedTitle }) })
   } }
@@ -340,6 +344,7 @@ describe('WorkspaceBrowser', () => {
         useWorkspaces: hook(workspaceState([{
           ...workspace('project', []),
           path: '/home/u/Documents/project',
+          paths: ['/home/u/Documents/project'],
           title: 'Project',
         }])),
         useHostInfo: selector => selector({ home: '/home/u', isLoopback: true }),
@@ -525,7 +530,8 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getByText('分组方式')).toBeTruthy() // the menu heading label
     expect(screen.getAllByRole('separator')).toHaveLength(2)
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      '按工作区', '按工作区树', '单列表', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
+      // Multi-root patch: two exclusive Workspace-order rows close the Group by section.
+      '按工作区', '按工作区树', '单列表', '按最近活动排序', '按工作区顺序', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
     ])
     expect(screen.getByRole('menuitem', { name: '按工作区' }).querySelector('svg')).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: '手动排序' }).querySelector('svg')).toBeTruthy()
@@ -549,6 +555,93 @@ describe('WorkspaceBrowser', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(b.store.getSnapshot().groupBy).toBe('workspace')
+  })
+
+  it('orders groups by their newest Session when Group by is set to 按最近活动排序', () => {
+    localStorage.clear()
+    const b = mount({
+      useSessions: hook(sessionState([summary('a-new', 10), summary('b-new', 300), summary('c-new', 20)])),
+      useWorkspaces: hook(workspaceState([
+        workspace('alpha', ['a-new']), workspace('beta', ['b-new']), workspace('gamma', ['c-new']),
+      ])),
+    })
+    const headers = () => screen.getAllByRole('treeitem')
+      .filter(row => row.getAttribute('aria-expanded') !== null)
+      .map(row => row.textContent ?? '')
+    // Registry order until the option is picked.
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['alpha', 'beta', 'gamma'])
+
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '按最近活动排序' }))
+    expect(b.store.getSnapshot().groupsByActive).toBe(true)
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['beta', 'gamma', 'alpha'])
+
+    // A flatter workspace rises without any drag write touching the registry order.
+    rerender(b, { useSessions: hook(sessionState([summary('a-new', 500), summary('b-new', 300), summary('c-new', 20)])) })
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['alpha', 'beta', 'gamma'])
+    expect(b.store.getSnapshot().sessionOrderByAccount).toEqual({})
+
+    // Picking a grouping choice swaps the view and leaves the ordering choice as it is.
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
+    expect(b.store.getSnapshot().groupBy).toBe('flat')
+    expect(b.store.getSnapshot().groupsByActive).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '按工作区' }))
+    expect(headers().map(text => /^(alpha|beta|gamma)/u.exec(text)?.[0])).toEqual(['alpha', 'beta', 'gamma'])
+    b.view.unmount()
+  })
+
+  it('lets 按最近活动排序 be turned off again through 按工作区顺序', () => {
+    localStorage.clear()
+    const sessions = sessionState([summary('a-new', 10), summary('b-new', 300), summary('c-new', 20)])
+    const workspaces = workspaceState([
+      workspace('alpha', ['a-new']), workspace('beta', ['b-new']), workspace('gamma', ['c-new']),
+    ])
+    const b = mount({ useSessions: hook(sessions), useWorkspaces: hook(workspaces) })
+    const groupNames = () => screen.getAllByRole('treeitem')
+      .filter(row => row.getAttribute('aria-expanded') !== null)
+      .map(row => /^(alpha|beta|gamma)/u.exec(row.textContent ?? '')?.[0])
+
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '按最近活动排序' }))
+    expect(b.store.getSnapshot().groupsByActive).toBe(true)
+    expect(groupNames()).toEqual(['beta', 'gamma', 'alpha'])
+
+    // Every option row keeps a check marker: the selected order row shows it,
+    // and the other row is still clickable (this was the "cannot turn it off" bug).
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    expect(screen.getByRole('menuitem', { name: '按最近活动排序' }).querySelector('svg')).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: '按工作区顺序' }))
+    expect(b.store.getSnapshot().groupsByActive).toBe(false)
+    expect(groupNames()).toEqual(['alpha', 'beta', 'gamma'])
+
+    // The choice survives a remount and the default order stays restorable.
+    b.view.unmount()
+    const restored = mount({ useSessions: hook(sessions), useWorkspaces: hook(workspaces) })
+    expect(restored.store.getSnapshot().groupsByActive).toBe(false)
+    expect(groupNames()).toEqual(['alpha', 'beta', 'gamma'])
+    restored.view.unmount()
+  })
+
+  it('does not let the trailing blank session decide the activity order', () => {
+    localStorage.clear()
+    const preferences = createWorkspaceViewStore().create()
+    preferences.actions.setGroupsByActive(true)
+    mount({
+      useSessions: hook(sessionState([
+        // The blank is the most recently written member of gamma, but it carries
+        // no content, so gamma must not lead the list.
+        summary('a-new', 10), summary('b-new', 300), summary('blank-g', 900, { blank: true }),
+      ], { main: sid('blank-g') })),
+      useWorkspaces: hook(workspaceState([
+        workspace('alpha', ['a-new']), workspace('beta', ['b-new']), workspace('gamma', ['blank-g']),
+      ])),
+    })
+    const names = screen.getAllByRole('treeitem')
+      .filter(row => row.getAttribute('aria-expanded') !== null)
+      .map(row => /^(alpha|beta|gamma)/u.exec(row.textContent ?? '')?.[0])
+    expect(names).toEqual(['beta', 'alpha', 'gamma'])
   })
 
   it('picking 全部对话（显示已归档） keeps existing rows and reveals archived ones in place', () => {
@@ -1371,7 +1464,111 @@ describe('WorkspaceBrowser', () => {
     expect(startSession).toHaveBeenCalledWith(wid('alpha'))
   })
 
-  it('auto-expands the Ungrouped bucket for a loose current session; its header has neither menu nor ＋', () => {
+  it('shows a root count and starts a new session in the chosen root', () => {
+    const startSession = vi.fn()
+    const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([multi])),
+      startSession,
+    })
+    expect(screen.getByLabelText('2 个根目录').textContent).toBe('2')
+    // The primary cell starts in the primary root; the chevron picks another.
+    fireEvent.click(screen.getByRole('button', { name: '在“alpha”中选择根目录并新建会话' }))
+    fireEvent.click(screen.getByText('a-two'))
+    expect(startSession).toHaveBeenCalledWith(wid('alpha'), { rootPath: '/w/a-two' })
+  })
+
+  it('opens root management, appends a picked root, and promotes another root', async () => {
+    const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
+    const addPath = vi.fn(async () => multi)
+    const setPrimaryPath = vi.fn(async () => multi)
+    const pickDirectory = vi.fn(async () => '/w/new')
+    const b = mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([multi])),
+      addPath,
+      setPrimaryPath,
+      pickDirectory,
+    })
+    // The Workspace menu is a registered context-menu surface now; the dialog
+    // itself is driven by the shared action request.
+    b.openDialog(wid('alpha'), 'alpha', 'roots')
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getByText('添加根目录…'))
+    await waitFor(() => {
+      expect(addPath).toHaveBeenCalledWith(wid('alpha'), '/w/new')
+    })
+    fireEvent.click(dialog.getByText('设为主根'))
+    await waitFor(() => {
+      expect(setPrimaryPath).toHaveBeenCalledWith(wid('alpha'), '/w/a-two')
+    })
+  })
+
+  it('adds a root from a pasted absolute path', async () => {
+    const multi = { ...workspace('alpha', []), paths: ['/w/a'] }
+    const addPath = vi.fn(async () => multi)
+    const b = mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([multi])),
+      addPath,
+    })
+    b.openDialog(wid('alpha'), 'alpha', 'roots')
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.change(dialog.getByLabelText('粘贴绝对路径'), { target: { value: '/w/manual' } })
+    fireEvent.click(dialog.getByText('添加'))
+    await waitFor(() => {
+      expect(addPath).toHaveBeenCalledWith(wid('alpha'), '/w/manual')
+    })
+  })
+
+  it('creates a multi-root workspace from the creation dialog', async () => {
+    const created = { ...workspace('group', []), paths: ['/w/a', '/w/b'] }
+    const createWorkspace = vi.fn(async () => created)
+    const pickDirectory = vi.fn()
+      .mockResolvedValueOnce('/w/a')
+      .mockResolvedValueOnce('/w/b')
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([])),
+      createWorkspace,
+      pickDirectory,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '新建多根工作区' }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getByText('添加根目录…'))
+    await waitFor(() => { expect(dialog.getByText('a')).toBeTruthy() })
+    fireEvent.click(dialog.getByText('添加根目录…'))
+    await waitFor(() => { expect(dialog.getByText('b')).toBeTruthy() })
+    fireEvent.click(dialog.getByText('创建多根工作区'))
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledWith({ paths: ['/w/a', '/w/b'] })
+    })
+  })
+
+  it('creates a multi-root workspace from pasted absolute paths', async () => {
+    const created = { ...workspace('group', []), paths: ['/w/a', '/w/b'] }
+    const createWorkspace = vi.fn(async () => created)
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState([])),
+      createWorkspace,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '新建多根工作区' }))
+    const dialog = within(screen.getByRole('dialog'))
+    const input = dialog.getByLabelText('粘贴绝对路径')
+    fireEvent.change(input, { target: { value: '/w/a' } })
+    fireEvent.click(dialog.getByText('添加'))
+    fireEvent.change(input, { target: { value: '/w/b' } })
+    fireEvent.click(dialog.getByText('添加'))
+    fireEvent.click(dialog.getByText('创建多根工作区'))
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledWith({ paths: ['/w/a', '/w/b'] })
+    })
+  })
+
+  it('auto-expands the Ungrouped bucket for a loose current session; its header has no menu and its ＋ is inert', () => {
     mount({
       useSessions: hook(sessionState([summary('loose', 1)], { main: sid('loose') })),
       useWorkspaces: hook(workspaceState([workspace('alpha', [])])),
@@ -2726,6 +2923,13 @@ describe('Workspace tree grouping', () => {
     rerender(b, { useWorkspaces: hook(workspaceState([child, root])) })
     expect(screen.queryByText('Team')).toBeNull()
     expect(within(section('Projects')).getByText('Child')).toBeTruthy()
+  })
+
+  it('nests by the primary root while exposing extra roots', () => {
+    const multiChild = { ...child, paths: [child.path, '/projects/team/backend'] }
+    mount({ useWorkspaces: hook(workspaceState([multiChild, root])) })
+    expect(within(section('Projects')).getByText('Child')).toBeTruthy()
+    expect(within(section('Projects')).getByLabelText('2 个根目录').textContent).toBe('2')
   })
 
   it('restores collapsed ancestors and keeps the flat view independent', () => {

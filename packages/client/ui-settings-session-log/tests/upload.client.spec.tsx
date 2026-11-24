@@ -27,11 +27,22 @@ function fixture(writable = true) {
   const preference = new UploadPreference(form)
   const props = {
     useUpload: bindSnapshotSelector(formState), useMutation: bindSnapshotSelector(preference.state),
-    setEnabled: (enabled: boolean) => preference.setEnabled(enabled), dismiss: () => { preference.dismiss() },
+    setEnabled: (enabled: boolean) => preference.setEnabled(enabled), dismiss: (seq: number) => { preference.dismiss(seq) },
     t: (key: keyof typeof en) => en[key],
   } as ComponentProps<typeof UploadRow>
   return { formState, set, preference, props }
 }
+
+it('keeps multiple save notices instead of replacing one another', async () => {
+  const { props, preference } = fixture()
+  render(<UploadToast {...props} />)
+  await preference.setEnabled(false)
+  await preference.setEnabled(true)
+  expect(screen.getAllByRole('alert')).toHaveLength(2)
+  const first = preference.state.getSnapshot().notices[0]!.seq
+  preference.dismiss(first)
+  expect(preference.state.getSnapshot().notices).toHaveLength(1)
+})
 
 it('shows a saved preference and keeps its notice after the row unmounts', async () => {
   const { props, set } = fixture()

@@ -21,6 +21,7 @@ import type { GenericCallView } from '@deepseek-ai/dsh-tools'
 import {
   completionAuthority,
   goalToolExecution,
+  pauseAuthority,
   requireDirectHuman,
 } from './authority.ts'
 import { renderWrapupContext } from './wrapup.ts'
@@ -119,7 +120,11 @@ function guidance(blockedAfter: number): string {
     + 'resume to rearm it. Mark complete only when the objective is actually achieved. Mark '
     + `blocked only after the same blocking condition persists for at least ${blockedAfter} `
     + 'consecutive goal rounds, and report that concrete condition in blocked_reason; difficulty, uncertainty, '
-    + 'or useful remaining work is not blocked.'
+    + 'or useful remaining work is not blocked. '
+    + 'During an automatic goal round, keep the goal active only while you can still make progress on '
+    + 'your own. If the next step needs the human to decide, approve, choose, or supply something, call '
+    + 'update_goal action pause for this goal before ending the round, then ask for exactly what you need. '
+    + 'Saying that you are waiting without pausing changes nothing and the round repeats.'
 }
 
 /** Validate config even when apply is called directly outside Loader normalization. */
@@ -241,8 +246,10 @@ export function apply(ctx: Context, config: Config): void {
         type: 'string',
         required: true,
         enum: UPDATE_ACTIONS,
-        description: 'edit, pause, and resume require a direct top-level human request. complete and blocked are also allowed '
-          + 'during an automatic continuation of this goal; blocked is rejected before the configured minimum round count.',
+        description: 'edit and resume require a direct top-level human request. pause is also allowed during: '
+          + 'this goal\'s own automatic round, when the next step needs a human decision, approval, or missing '
+          + 'information. complete and blocked are allowed during an automatic continuation of this goal; '
+          + 'blocked is rejected before the configured minimum round count.',
       },
       objective: { type: 'string', description: 'Replacement objective; valid only with action edit.' },
       max_goal_rounds: { type: 'number', description: 'Replacement cap; valid only with action edit.' },
@@ -264,7 +271,12 @@ export function apply(ctx: Context, config: Config): void {
         return Promise.resolve(goalValue(goal))
       }
       if (args.action === 'pause' || args.action === 'resume') {
-        requireDirectHuman(ctx, execution)
+        // Pause may also be issued by the current automatic round itself: a
+        // round that needs a human decision has no other way to say so, and
+        // without it the driver re-asks until the round cap. Resume stays
+        // human-only — a model must never clear its own stop.
+        if (args.action === 'pause') pauseAuthority(ctx, execution, ref)
+        else requireDirectHuman(ctx, execution)
         const current = ctx.goals.get(execution.agent)
         if (args.action === 'resume' && current?.id === ref.id && current.revision === ref.revision
           && current.phase === 'paused') {

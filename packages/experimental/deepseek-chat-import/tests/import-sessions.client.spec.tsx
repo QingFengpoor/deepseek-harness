@@ -24,7 +24,7 @@ function hook<T>(snapshot: T) {
 }
 
 const view = (id: string, title: string, sessionIds: SessionId[]) => ({
-  workspaceId: id as WorkspaceId, title, path: `/home/a/${title}`, sessionIds,
+  workspaceId: id as WorkspaceId, title, path: `/home/a/${title}`, paths: [`/home/a/${title}`], sessionIds,
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
 const workspaces: WorkspaceSnapshot = {

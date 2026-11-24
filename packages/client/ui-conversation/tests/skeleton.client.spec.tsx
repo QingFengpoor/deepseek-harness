@@ -108,7 +108,7 @@ const useTrajectory: SessionSlotProps['useTrajectory'] = () => { throw new Error
 
 function workspace(id = 'w1'): WorkspaceView {
   return {
-    workspaceId: wid(id), path: `/projects/${id}`, title: id, sessionIds: [],
+    workspaceId: wid(id), path: `/projects/${id}`, paths: [`/projects/${id}`], title: id, sessionIds: [],
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   }
 }

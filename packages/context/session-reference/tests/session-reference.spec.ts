@@ -904,7 +904,7 @@ describe('session reference discovery and preparation', () => {
     expect(decision.messages[3]).toBe(plugin)
   })
 
-  it('does not prepare a rejected pre-step and rejects malformed direct mentions', async () => {
+  it('does not prepare a rejected pre-step and keeps malformed direct mentions verbatim', async () => {
     const ctx = await harness()
     const target = ctx.sessions.create(SessionId('target'))
     const agent = fakeAgent(target)
@@ -922,11 +922,36 @@ describe('session reference discovery and preparation', () => {
     )).resolves.toEqual({ kind: 'reject' })
     expect(readSurface).not.toHaveBeenCalled()
 
-    await expect(agentEvents(ctx, agent).waterfall(
+    // A rejected mention is user input, not a plugin fault: the turn still runs.
+    const decision = await agentEvents(ctx, agent).waterfall(
       'agent/pre-step',
       { modelSelection: { provider: 'seed', model: 'seed' }, messages: [malformed], turn: 1, step: 1, signal },
       () => Promise.resolve({ kind: 'enter' as const, messages: [malformed] }),
-    )).rejects.toThrow(/invalid session reference URI/)
+    )
+    expect(decision.kind).toBe('enter')
+    if (decision.kind !== 'enter') throw new Error('expected entered pre-step')
+    expect(decision.messages).toHaveLength(1)
+    expect(decision.messages[0]?.content).toEqual([{ type: 'text', text: '@[bad](dsh-session:not-canonical)' }])
+  })
+
+  it('runs a turn whose only mention is a bare scheme label such as an owner id', async () => {
+    const ctx = await harness()
+    const target = ctx.sessions.create(SessionId('target'))
+    const agent = fakeAgent(target)
+    const handoff = createUserMessage({
+      content: [{ type: 'text', text: '所有者：dsh-session:magpie-vm-install-20261118' }],
+      source: { kind: 'user' },
+    })
+
+    const decision = await agentEvents(ctx, agent).waterfall(
+      'agent/pre-step',
+      { modelSelection: { provider: 'mock', model: 'mock' }, messages: [handoff], turn: 1, step: 1, signal: new AbortController().signal },
+      () => Promise.resolve({ kind: 'enter' as const, messages: [handoff] }),
+    )
+    expect(decision.kind).toBe('enter')
+    if (decision.kind !== 'enter') throw new Error('expected entered pre-step')
+    expect(decision.messages).toHaveLength(1)
+    expect(decision.messages[0]?.content).toEqual([{ type: 'text', text: '所有者：dsh-session:magpie-vm-install-20261118' }])
   })
 
   it('still matches an unlabeled session on its own metadata', async () => {

@@ -152,7 +152,7 @@ describe('GoalService creation and replay', () => {
     vi.useRealTimers()
   })
 
-  it('uses 256 rounds by default and validates create input inside create', async () => {
+  it('uses 16 rounds by default and validates create input inside create', async () => {
     const { ctx, agent } = await harness()
     expect(() => ctx.goals.create(agent, { objective: '   ' })).toThrow(expect.objectContaining({
       code: 'GOAL_INVALID_OBJECTIVE',
@@ -165,7 +165,7 @@ describe('GoalService creation and replay', () => {
     expect(() => ctx.goals.create(agent, {
       objective: 'x', maxGoalRounds: Number.MAX_SAFE_INTEGER + 1,
     })).toThrow(GoalError)
-    expect(ctx.goals.create(agent, { objective: 'x' }).maxGoalRounds).toBe(256)
+    expect(ctx.goals.create(agent, { objective: 'x' }).maxGoalRounds).toBe(16)
   })
 
   it('also resolves the default when constructed directly without Cordis config normalization', async () => {
@@ -180,7 +180,7 @@ describe('GoalService creation and replay', () => {
     const goals = new DirectGoalService(ctx)
     await goals.initialize()
     expect(goals.create(stub.agent, { objective: 'direct' })).toMatchObject({
-      objective: 'direct', maxGoalRounds: 256,
+      objective: 'direct', maxGoalRounds: 16,
     })
   })
 

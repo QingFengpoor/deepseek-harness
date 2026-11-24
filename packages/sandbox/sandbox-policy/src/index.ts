@@ -40,6 +40,14 @@ function isExecutionWorldPath(path: string): boolean {
   return isAbsolute(path) && !path.includes('\0')
 }
 
+/** Preserve execution-world spelling; enforcing providers resolve filesystem identity on their host. */
+function resolveWorkspaceRoot(path: string): string {
+  if (!isAbsolute(path) || path.includes('\0')) {
+    throw new Error('sandbox-policy: workspace root must be an absolute execution-world path without NUL bytes')
+  }
+  return path
+}
+
 /**
  * Validate and detach the configured extra writable directories. They stay in
  * their execution-world spelling here: a local host must not canonicalize a
@@ -57,17 +65,35 @@ function resolveAdditionalWritableRoots(roots: readonly string[] | undefined): r
   return Object.freeze([...new Set(roots)])
 }
 
+/**
+ * Structural view of the workspace registry (`ctx.workspaceRegistry`) — the
+ * only fact the policy needs from it, kept structural so the low-level policy
+ * home takes no package dependency on the workspace model. Absent in
+ * deployments without the registry (headless/agentless), where the session cwd
+ * stays the single root.
+ */
+interface WorkspaceRootsSource {
+  /** Synchronous in-memory snapshot; the registry owns durability. */
+  list(): readonly {
+    readonly sessionIds: readonly string[]
+    readonly paths: readonly string[]
+  }[]
+}
+
 /** Render the policy without claiming which capabilities are mounted. */
 function renderPolicyContext(policy: SandboxExecutionPolicy): string {
   switch (policy.mode) {
     case 'read-only':
       return 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.'
     case 'workspace-write': {
+      const roots = policy.workspaceRoots ?? [policy.workspaceRoot]
       const additional = policy.additionalWritableRoots
       const extra = additional === undefined
         ? ''
         : ` Additional writable directories: ${JSON.stringify(additional)}. On Windows, these additional grants apply to file tools only, not sandboxed processes.`
-      return `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}.${extra} Some platform temporary areas may also be writable.`
+      return roots.length > 1
+        ? `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under these session workspace roots: ${JSON.stringify(roots)}.${extra} Some platform temporary areas may also be writable.`
+        : `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}.${extra} Some platform temporary areas may also be writable.`
     }
     case 'danger-full-access':
       return 'Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.'
@@ -207,6 +233,7 @@ export class SandboxPolicyService extends Service {
    */
   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
     const { session } = request
+    const workspaceRoots = session === undefined ? undefined : this.rootsOf(session)
     const registrations = session === undefined ? undefined : this.writableRootRegistrations.get(session)
     const additionalWritableRoots = registrations === undefined
       ? this.additionalWritableRoots
@@ -215,7 +242,9 @@ export class SandboxPolicyService extends Service {
       mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
       workspaceRoot: this.sessionWorkspaceRoot(session),
       ...additionalWritableRoots === undefined ? {} : { additionalWritableRoots },
-      ...session === undefined ? {} : { sessionId: session.id },
+      ...session === undefined
+        ? {}
+        : { sessionId: session.id, ...workspaceRoots !== undefined && workspaceRoots.length > 1 ? { workspaceRoots } : {} },
     }
   }
 
@@ -258,6 +287,23 @@ export class SandboxPolicyService extends Service {
     }, 'sandboxPolicy.registerWritableRoot()')
     // oxlint-disable-next-line typescript/no-misused-promises -- synchronous cleanup preserves the exact Cordis effect disposer
     return dispose
+  }
+
+  /**
+   * Every writable root for one session: its cwd plus every root of the
+   * Workspace that owns it (the registry's current record, so adding or
+   * removing a root takes effect on the next call). The cwd is always
+   * included — a session may outlive its workspace membership. Without a
+   * mounted registry the cwd stands alone, which is the single-root behaviour.
+   * @param session - session whose roots are resolved.
+   * @returns the deduplicated absolute roots, primary cwd first.
+   */
+  rootsOf(session: Session): string[] {
+    const cwd = session.header.cwd
+    const registry = this.ctx.get('workspaceRegistry') as WorkspaceRootsSource | undefined
+    const owned = registry?.list().find(workspace => workspace.sessionIds.includes(session.id))?.paths ?? []
+    const roots = [...(cwd === undefined ? [] : [this.sessionWorkspaceRoot(session)]), ...owned].map(resolveWorkspaceRoot)
+    return [...new Set(roots)]
   }
 
   /**

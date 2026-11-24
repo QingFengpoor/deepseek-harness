@@ -87,6 +87,8 @@
   user-select: none;
 }
 
+/* Both marks stay painted in every state; the removal control owns its own
+   slot so the × fading in never replaces the opening mark. */
 .marker {
   pointer-events: none;
 }
@@ -97,42 +99,26 @@
   corner-shape: round;
   background: transparent;
   cursor: pointer;
-}
-
-.quoteMark,
-.closeMark {
-  grid-area: 1 / 1;
+  opacity: 0;
   transition: opacity 120ms ease;
 }
 
-.closeMark {
-  opacity: 0;
+.remove > svg {
+  flex: none;
 }
 
-.quote[data-removable]:focus-within .quoteMark {
-  opacity: 0;
-}
-
-.quote[data-removable]:focus-within .closeMark {
+.quote[data-removable]:focus-within .remove {
   opacity: 1;
 }
 
 @media (hover: hover) {
-  .quote[data-removable]:hover .quoteMark {
-    opacity: 0;
-  }
-
-  .quote[data-removable]:hover .closeMark {
+  .quote[data-removable]:hover .remove {
     opacity: 1;
   }
 }
 
 @media (hover: none) {
-  .quote[data-removable] .quoteMark {
-    opacity: 0;
-  }
-
-  .quote[data-removable] .closeMark {
+  .quote[data-removable] .remove {
     opacity: 1;
   }
 }
