@@ -5,6 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-subagent'
 import { TeamError } from './error.ts'
@@ -79,11 +80,27 @@ export class TeamService extends TypertRemoteService {
     if (this.defaultEnabled) {
       ctx.on('agent/created', async ({ agent, source, signal }) => {
         // Child activation ownership is registered after agent/created settles.
-        if (source !== 'startup' || agent.session.header.origin === 'subagent') return
+        if (agent.session.header.origin === 'subagent') return
         if (this.projection.stateOf(agent.session).enabled !== undefined) return
+        // A blank Session is still a new conversation when a restart or an ordinary reopen resumes it, so the
+        // configured default applies there as well; a Session that already ran a turn keeps resuming as upstream
+        // leaves it, without the default.
+        const fresh = source === 'startup' || (source === 'resume' && this.isBlankRoot(agent.session))
+        if (!fresh) return
         await this.setEnabled(agent, true, signal)
       })
     }
+  }
+
+  /**
+   * Whether a root Session has not started a turn yet, by the boundary the Agent registry tracks for it — the same
+   * predicate that decides a blank Session for preset selection.
+   * @param session - the Session owned by the Agent being created.
+   * @returns true when no turn has started and none is open.
+   */
+  private isBlankRoot(session: Session): boolean {
+    const boundary = this.ctx.agents.turnBoundaryOf(session)
+    return boundary.openTurnStartSeq === null && boundary.lastTurn === 0
   }
 
   /**

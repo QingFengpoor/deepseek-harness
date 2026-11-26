@@ -27,7 +27,7 @@ kind: "package-reference"
 
 新 Session（包括普通分叉）默认关闭 Team 模式。参见[会话模式升级指南](../../../docs/upgrade-guide/v0.2.1-rc.2/session-team-mode/guide.zh.md)。在根 Session 的模型与推理等级菜单中打开**使用智能体团队**。关闭开关后，整棵树的后续步骤不再显示 Team 工具和提示词，同时保留任务与子代理。选择重启后仍有效；没有保存选择的历史任务板保持开启。
 
-设置 `defaultEnabled: true` 可在首次模型步骤之前启用新根 Session，包括普通分叉。初始化将选择保存为 `team/mode`；保存失败会拒绝 Agent 创建。已有选择优先，恢复 Session 时始终不应用默认值，包括从未保存选择的会话。后代使用其存活根节点的模式。[SDK 配置指南](../../../docs/user/guide/python-sdk.zh.md#enable-team-mode)提供可直接使用的 patch；标准 bundle 保持此选项关闭。
+设置 `defaultEnabled: true` 可在首次模型步骤之前启用新根 Session，包括普通分叉。初始化将选择保存为 `team/mode`；保存失败会拒绝 Agent 创建。已有选择优先。与上游不同，本 fork 在重启或普通重新打开一个**空白**根 Session 时也会套用默认值（只要该会话没有保存过选择），因此重新打开的新会话仍被视为新对话；已经跑过轮次的会话恢复时保持其未保存状态（关闭）。后代使用其存活根节点的模式。[SDK 配置指南](../../../docs/user/guide/python-sdk.zh.md#enable-team-mode)提供可直接使用的 patch；标准 bundle 保持此选项关闭。
 
 模式切换无需等待排队中的任务修改即可生效。每项修改在开始时检查当前模式：已经进入执行的操作继续完成，仍在排队的操作若开始时 Team 仍关闭则被拒绝。重新开启允许后续操作继续。保存失败时，已经追加的选择仍然有效；重试同一选择会再次保存，不重复记录模式。
 

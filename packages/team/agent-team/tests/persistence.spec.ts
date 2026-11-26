@@ -11,6 +11,7 @@ import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-j
 import SubagentService from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { mountWorkingDirectoryFixture } from '../../../subagent/subagent/tests/working-directory-fixture.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import TeamService from '../src/index.ts'
@@ -93,24 +94,75 @@ async function stack(
 
 for (const backend of backends) {
   describe(`${backend.name} Agent Teams recovery`, () => {
-    it.each([undefined, false, true])('preserves saved mode %s when resumed with the opposite default', async (enabled) => {
+    it.each([false, true])('preserves saved mode %s when resumed with the opposite default', async (enabled) => {
       const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-default-'))
       roots.push(storageRoot)
       const id = brandString<SessionId>('configured-resume')
-      const first = await stack(backend, storageRoot, [], { defaultEnabled: enabled === true })
+      const first = await stack(backend, storageRoot, [], { defaultEnabled: enabled })
       const lead = await first.ctx.agentLoop.create(id, { provider: 'mock', model: 'mock' })
       lead.session.append('session/title', { title: 'Saved session', messageSeqs: [], source: { kind: 'user' } })
       await first.ctx.sessions.flush(lead.session)
-      if (enabled === false) {
+      if (!enabled) {
         await first.ctx.agentTeams.setEnabled(lead, true)
         await first.ctx.agentTeams.setEnabled(lead, enabled)
       }
       const before = lead.session.ownEvents().filter(event => event.type === 'team/mode').map(event => event.data)
       await first.dispose()
-      const second = await stack(backend, storageRoot, [], { defaultEnabled: enabled !== true })
+      const second = await stack(backend, storageRoot, [], { defaultEnabled: !enabled })
       const resumed = await second.ctx.agents.resume({ resumeSessionId: id })
-      expect(second.ctx.agentTeams.isEnabled(resumed.agent)).toBe(enabled === true)
+      expect(second.ctx.agentTeams.isEnabled(resumed.agent)).toBe(enabled)
       expect(resumed.agent.session.ownEvents().filter(event => event.type === 'team/mode').map(event => event.data)).toEqual(before)
+      await resumed.dispose()
+    })
+
+    it('applies the configured default to a blank Session resumed after a restart', async () => {
+      const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-blank-resume-'))
+      roots.push(storageRoot)
+      const id = brandString<SessionId>('blank-resume')
+      const first = await stack(backend, storageRoot, [], { defaultEnabled: false })
+      const lead = await first.ctx.agentLoop.create(id, { provider: 'mock', model: 'mock' })
+      await first.ctx.sessions.flush(lead.session)
+      expect(lead.session.ownEvents().filter(event => event.type === 'team/mode')).toEqual([])
+      await first.dispose()
+      const second = await stack(backend, storageRoot, [], { defaultEnabled: true })
+      const resumed = await second.ctx.agents.resume({ resumeSessionId: id, agentOptions: { provider: 'mock', model: 'mock' } })
+      expect(second.ctx.agentTeams.isEnabled(resumed.agent)).toBe(true)
+      expect(resumed.agent.session.ownEvents().filter(event => event.type === 'team/mode').map(event => event.data))
+        .toEqual([{ enabled: true }])
+      expect(second.ctx.sessionProjections.snapshot(resumed.agent.session).values.agentTeam).toMatchObject({ enabled: true })
+      await resumed.dispose()
+    })
+
+    it('leaves a resumed blank Session off while the configured default is off', async () => {
+      const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-blank-off-'))
+      roots.push(storageRoot)
+      const id = brandString<SessionId>('blank-resume-off')
+      const first = await stack(backend, storageRoot, [], { defaultEnabled: false })
+      const lead = await first.ctx.agentLoop.create(id, { provider: 'mock', model: 'mock' })
+      await first.ctx.sessions.flush(lead.session)
+      await first.dispose()
+      const second = await stack(backend, storageRoot, [], { defaultEnabled: false })
+      const resumed = await second.ctx.agents.resume({ resumeSessionId: id, agentOptions: { provider: 'mock', model: 'mock' } })
+      expect(second.ctx.agentTeams.isEnabled(resumed.agent)).toBe(false)
+      expect(resumed.agent.session.ownEvents().filter(event => event.type === 'team/mode')).toEqual([])
+      await resumed.dispose()
+    })
+
+    it('does not apply the configured default to a resumed Session that already ran a turn', async () => {
+      const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-started-resume-'))
+      roots.push(storageRoot)
+      const id = brandString<SessionId>('started-resume')
+      const first = await stack(backend, storageRoot, [textResponse('first answer')], { defaultEnabled: false })
+      const lead = await first.ctx.agentLoop.create(id, { provider: 'mock', model: 'mock' })
+      lead.followup(createUserMessage({ content: [{ type: 'text', text: 'first prompt' }], source: { kind: 'user' } }))
+      await lead.whenIdle()
+      expect(lead.session.ownEvents().filter(event => event.type === 'team/mode')).toEqual([])
+      await first.ctx.sessions.flush(lead.session)
+      await first.dispose()
+      const second = await stack(backend, storageRoot, [], { defaultEnabled: true })
+      const resumed = await second.ctx.agents.resume({ resumeSessionId: id, agentOptions: { provider: 'mock', model: 'mock' } })
+      expect(second.ctx.agentTeams.isEnabled(resumed.agent)).toBe(false)
+      expect(resumed.agent.session.ownEvents().filter(event => event.type === 'team/mode')).toEqual([])
       await resumed.dispose()
     })
 
