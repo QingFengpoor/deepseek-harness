@@ -292,6 +292,11 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.turnErrorHint {
+  margin-top: 2px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .turnErrorCode {
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-markdown-code-block-small);

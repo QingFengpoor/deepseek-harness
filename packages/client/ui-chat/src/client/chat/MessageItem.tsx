@@ -140,6 +140,9 @@ function TurnErrorItem({ node, t }: {
       <div className={css.turnErrorCopy}>
         <span className={css.turnErrorTitle}>{node.code === 'ACCOUNT_SIGNED_OUT' || node.code === 'INTERRUPTED' ? t('message.taskStopped') : t('message.turnError')}</span>
         <span className={css.turnErrorMessage}>{failureMessage(node.message, node.code, t)}</span>
+        {node.code === 'WORKING_DIRECTORY_UNAVAILABLE' || node.code === 'WORKING_DIRECTORY_NOT_FOUND' || node.code === 'WORKING_DIRECTORY_INVALID'
+          ? <span className={css.turnErrorHint}>{t('message.turnError.workingDirectory')}</span>
+          : null}
       </div>
       {node.code !== undefined && node.code !== 'INTERRUPTED' && <code className={css.turnErrorCode}>{node.code}</code>}
     </div>
