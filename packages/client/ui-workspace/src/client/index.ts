@@ -1,4 +1,5 @@
 import { IconFolderOpenRegular, IconEditOutlineRegular, IconTrashOutlineRegular, IconPinFillRegular, IconPinOutlineRegular, IconUnarchiveOutlineRegular, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCopyOutlineRegular, IconMailReadOutlineRegular, IconMailUnreadOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { sessionDirectory } from '@deepseek-ai/dsh-api-session-controller/client/directories'
 import { SessionMenu } from './session-actions/SessionMenu.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-context-menu/client'
 /**
@@ -389,6 +390,25 @@ export function apply(ctx: Context, config: SyncedConfig<WorkspaceNavigationConf
     deleteWorkspace: async (workspaceId) => { await workspaces.delete(workspaceId) },
     addPath: async (workspaceId, path) => workspaces.addPath(workspaceId, path),
     removePath: async (workspaceId, path) => workspaces.removePath(workspaceId, path),
+    rootSessions: (workspaceId, path) => {
+      const workspace = workspaces.list.getSnapshot().items.find(item => item.workspaceId === workspaceId)
+      if (workspace === undefined) return []
+      return workspace.sessionIds.filter(sessionId => sessionDirectory(sessions, sessionId) === path)
+    },
+    migrateRootSessions: async (workspaceId, fromPath, toPath) => {
+      const workspace = workspaces.list.getSnapshot().items.find(item => item.workspaceId === workspaceId)
+      const targets = workspace === undefined
+        ? []
+        : workspace.sessionIds.filter(sessionId => sessionDirectory(sessions, sessionId) === fromPath)
+      let migrated = 0
+      let failed = 0
+      for (const sessionId of targets) {
+        const moved = await ctx.remote.session.setWorkingDirectory({ sessionId, path: toPath })
+        if (moved.ok) migrated += 1
+        else failed += 1
+      }
+      return { migrated, failed }
+    },
     setPrimaryPath: async (workspaceId, path) => workspaces.setPrimaryPath(workspaceId, path),
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)

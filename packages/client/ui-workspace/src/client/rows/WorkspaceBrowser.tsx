@@ -944,6 +944,8 @@ export function WorkspaceBrowser({
   deleteWorkspace,
   addPath,
   removePath,
+  rootSessions,
+  migrateRootSessions,
   setPrimaryPath,
   pickDirectory,
   insertWorkspaceBefore,
@@ -1355,6 +1357,7 @@ export function WorkspaceBrowser({
   const [rootsError, setRootsError] = useState<string | null>(null)
   const [rootPathDraft, setRootPathDraft] = useState('')
   const [rootRemoveTarget, setRootRemoveTarget] = useState<string | null>(null)
+  const [rootMigrateTarget, setRootMigrateTarget] = useState<string | null>(null)
   // The workspace context menu opens this dialog through the shared action
   // request; closing it settles that request so a later open is a fresh one.
   const rootsRequestId = workspaceActionRequest?.action === 'roots' ? workspaceActionRequest.workspaceId : null
@@ -1403,14 +1406,22 @@ export function WorkspaceBrowser({
       setRootsBusy(null)
     }
   }
-  const removeRoot = async (path: string): Promise<void> => {
+  const removeRoot = async (path: string, migrateTo?: string): Promise<void> => {
     if (rootsTarget === undefined || rootsBusy !== null) return
     const workspaceId = rootsTarget.workspaceId
     setRootsBusy(path)
     setRootsError(null)
     try {
+      if (migrateTo !== undefined) {
+        const moved = await migrateRootSessions(workspaceId, path, migrateTo)
+        if (moved.failed > 0) {
+          setRootsError(t('roots.migrateFailed', { message: `${moved.failed}` }))
+          return
+        }
+      }
       await removePath(workspaceId, path)
       setRootRemoveTarget(null)
+      setRootMigrateTarget(null)
     } catch (reason: unknown) {
       setRootsError(t('roots.removeFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
     } finally {
@@ -1789,28 +1800,60 @@ export function WorkspaceBrowser({
                     </Button>
                   )}
                 </div>
-                {rootRemoveTarget === path && (
-                  <div className={css.rootConfirm}>
-                    <span>{t('roots.removeConfirm', { path })}</span>
-                    <div className={css.rootConfirmActions}>
-                      <Button
-                        variant="outline"
-                        disabled={rootsBusy !== null}
-                        onClick={() => { setRootRemoveTarget(null) }}
-                      >
-                        {t('cancel')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className={css.deleteAction}
-                        disabled={rootsBusy !== null}
-                        onClick={() => { void removeRoot(path) }}
-                      >
-                        {t('roots.remove')}
-                      </Button>
+                {rootRemoveTarget === path && (() => {
+                  const affected = rootSessions(rootsTarget.workspaceId, path)
+                  const targets = rootsTarget.paths.filter(candidate => candidate !== path)
+                  const migrateTarget = rootMigrateTarget !== null && targets.includes(rootMigrateTarget)
+                    ? rootMigrateTarget
+                    : targets[0]
+                  const canMigrate = affected.length > 0 && migrateTarget !== undefined
+                  return (
+                    <div className={css.rootConfirm}>
+                      <span>{affected.length === 0
+                        ? t('roots.removeConfirm', { path })
+                        : t('roots.removeMoveConfirm', { count: affected.length })}</span>
+                      {canMigrate && (
+                        <select
+                          className={css.renameInput}
+                          value={migrateTarget}
+                          disabled={rootsBusy !== null}
+                          aria-label={t('roots.removeMoveTarget')}
+                          onChange={(event) => { setRootMigrateTarget(event.target.value) }}
+                        >
+                          {targets.map(candidate => (
+                            <option key={candidate} value={candidate}>{candidate}</option>
+                          ))}
+                        </select>
+                      )}
+                      <div className={css.rootConfirmActions}>
+                        <Button
+                          variant="outline"
+                          disabled={rootsBusy !== null}
+                          onClick={() => { setRootRemoveTarget(null); setRootMigrateTarget(null) }}
+                        >
+                          {t('cancel')}
+                        </Button>
+                        {canMigrate && (
+                          <Button
+                            variant="outline"
+                            disabled={rootsBusy !== null}
+                            onClick={() => { void removeRoot(path, migrateTarget) }}
+                          >
+                            {t('roots.migrateAndRemove')}
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          className={css.deleteAction}
+                          disabled={rootsBusy !== null}
+                          onClick={() => { void removeRoot(path) }}
+                        >
+                          {affected.length > 0 ? t('roots.removeKeepSessions') : t('roots.remove')}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
               </div>
             ))}
             <div className={css.manualPathRow}>

@@ -153,6 +153,8 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     deleteWorkspace: vi.fn(async () => {}),
     addPath: vi.fn(async () => workspace('created', [])),
     removePath: vi.fn(async () => workspace('created', [])),
+    rootSessions: vi.fn(() => []),
+    migrateRootSessions: vi.fn(async () => ({ migrated: 0, failed: 0 })),
     setPrimaryPath: vi.fn(async () => workspace('created', [])),
     pickDirectory: vi.fn(async () => null),
     unarchiveSession: vi.fn(async () => {}),
@@ -3072,5 +3074,68 @@ describe('Workspace tree grouping', () => {
     dragEnd(alpha)
     expect(b.props.insertWorkspaceBefore).toHaveBeenCalledOnce()
     expect(b.props.insertWorkspaceBefore).toHaveBeenCalledWith(wid('alpha'), wid('gamma'))
+  })
+})
+
+describe('removing a root that still holds Sessions', () => {
+  it('moves the Sessions to the chosen root before removing it', async () => {
+    const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
+    const rootSessions = vi.fn(() => ['s1', 's2'])
+    const migrateRootSessions = vi.fn(async () => ({ migrated: 2, failed: 0 }))
+    const removePath = vi.fn(async () => multi)
+    const b = mount({
+      useWorkspaces: hook(workspaceState([multi])),
+      rootSessions,
+      migrateRootSessions,
+      removePath,
+    })
+    b.openDialog(wid('alpha'), 'alpha', 'roots')
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getAllByText('移除根目录')[1]!)
+    expect(dialog.getByText('该根下还有 2 个会话，选择要迁移到的根：')).toBeTruthy()
+    fireEvent.click(dialog.getByText('迁移并移除'))
+    await waitFor(() => {
+      expect(migrateRootSessions).toHaveBeenCalledWith(wid('alpha'), '/w/a-two', '/w/a')
+      expect(removePath).toHaveBeenCalledWith(wid('alpha'), '/w/a-two')
+    })
+  })
+
+  it('removes the root without moving when the operator keeps them ungrouped', async () => {
+    const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
+    const migrateRootSessions = vi.fn(async () => ({ migrated: 0, failed: 0 }))
+    const removePath = vi.fn(async () => multi)
+    const b = mount({
+      useWorkspaces: hook(workspaceState([multi])),
+      rootSessions: vi.fn(() => ['s1']),
+      migrateRootSessions,
+      removePath,
+    })
+    b.openDialog(wid('alpha'), 'alpha', 'roots')
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getAllByText('移除根目录')[1]!)
+    fireEvent.click(dialog.getByText('保留未分组并移除'))
+    await waitFor(() => {
+      expect(removePath).toHaveBeenCalledWith(wid('alpha'), '/w/a-two')
+    })
+    expect(migrateRootSessions).not.toHaveBeenCalled()
+  })
+
+  it('keeps the root when the move fails', async () => {
+    const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
+    const removePath = vi.fn(async () => multi)
+    const b = mount({
+      useWorkspaces: hook(workspaceState([multi])),
+      rootSessions: vi.fn(() => ['s1']),
+      migrateRootSessions: vi.fn(async () => ({ migrated: 0, failed: 1 })),
+      removePath,
+    })
+    b.openDialog(wid('alpha'), 'alpha', 'roots')
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getAllByText('移除根目录')[1]!)
+    fireEvent.click(dialog.getByText('迁移并移除'))
+    await waitFor(() => {
+      expect(dialog.getByText('迁移失败：1 个会话没能迁移')).toBeTruthy()
+    })
+    expect(removePath).not.toHaveBeenCalled()
   })
 })

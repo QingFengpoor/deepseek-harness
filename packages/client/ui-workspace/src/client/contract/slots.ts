@@ -330,6 +330,13 @@ export type WorkspaceBrowserInjected = {
   addPath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
   /** Remove one root; the last root is refused by the Host. */
   removePath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
+  /** Sessions whose committed directory is exactly this root. */
+  rootSessions: (workspaceId: WorkspaceId, path: string) => readonly SessionId[]
+  /**
+   * Move every Session under `fromPath` to `toPath` before the root is
+   * removed. Rejections are counted, not thrown: the caller reports them.
+   */
+  migrateRootSessions: (workspaceId: WorkspaceId, fromPath: string, toPath: string) => Promise<{ migrated: number; failed: number }>
   /** Promote one owned root to primary. */
   setPrimaryPath: (workspaceId: WorkspaceId, path: string) => Promise<WorkspaceView>
   /**
