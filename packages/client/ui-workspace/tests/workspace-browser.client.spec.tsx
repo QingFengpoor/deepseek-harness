@@ -3080,7 +3080,7 @@ describe('Workspace tree grouping', () => {
 describe('removing a root that still holds Sessions', () => {
   it('moves the Sessions to the chosen root before removing it', async () => {
     const multi = { ...workspace('alpha', []), paths: ['/w/a', '/w/a-two'] }
-    const rootSessions = vi.fn(() => ['s1', 's2'])
+    const rootSessions = vi.fn(() => [sid('s1'), sid('s2')])
     const migrateRootSessions = vi.fn(async () => ({ migrated: 2, failed: 0 }))
     const removePath = vi.fn(async () => multi)
     const b = mount({
@@ -3106,7 +3106,7 @@ describe('removing a root that still holds Sessions', () => {
     const removePath = vi.fn(async () => multi)
     const b = mount({
       useWorkspaces: hook(workspaceState([multi])),
-      rootSessions: vi.fn(() => ['s1']),
+      rootSessions: vi.fn(() => [sid('s1')]),
       migrateRootSessions,
       removePath,
     })
@@ -3125,7 +3125,7 @@ describe('removing a root that still holds Sessions', () => {
     const removePath = vi.fn(async () => multi)
     const b = mount({
       useWorkspaces: hook(workspaceState([multi])),
-      rootSessions: vi.fn(() => ['s1']),
+      rootSessions: vi.fn(() => [sid('s1')]),
       migrateRootSessions: vi.fn(async () => ({ migrated: 0, failed: 1 })),
       removePath,
     })
