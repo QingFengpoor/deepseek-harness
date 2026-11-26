@@ -142,7 +142,8 @@ const NS = 'workspace'
  * and reloads with it.
  */
 export const inject = ['contextMenus',
-  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
+  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'remote.session',
+  'layout', 'shortcuts', 'remoteAccess',
   'uiSession', 'uiSession.sessionStatus',
 ]
 
