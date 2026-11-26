@@ -57,6 +57,8 @@ import type {
   SessionPromptValue,
   SessionRenameRequest,
   SessionRenameValue,
+  SessionSetWorkingDirectoryRequest,
+  SessionSetWorkingDirectoryValue,
   SessionSearchRequest,
   SessionSearchValue,
   SessionSelectModelRequest,
@@ -410,6 +412,21 @@ export class SessionController extends TypertRemoteService {
   @Remote('rename')
   rename(request: SessionRenameRequest): Promise<SessionRenameValue> {
     return this.commands.rename(request)
+  }
+
+  /**
+   * Move one Session's working directory to an existing directory and file it
+   * under the Workspace that owns the new root.
+   * @param request - Session identity and the directory to move to.
+   * @param signal - cancellation before the durable change.
+   * @returns the committed directory and the Workspace that accepted the Session.
+   */
+  @Remote('setWorkingDirectory')
+  setWorkingDirectory(
+    request: SessionSetWorkingDirectoryRequest,
+    signal: AbortSignal,
+  ): Promise<SessionSetWorkingDirectoryValue> {
+    return this.commands.setWorkingDirectory(request, signal)
   }
 
   /**

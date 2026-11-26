@@ -26,7 +26,9 @@ import { SessionTitleInvalidError } from '@deepseek-ai/dsh-session-title'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
-import type { Workspace } from '@deepseek-ai/dsh-workspace'
+import type { Workspace, WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import type {} from '@deepseek-ai/dsh-working-directory'
+import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import {
   ApiSessionAgentController,
   ApiSessionCwdConflict,
@@ -50,6 +52,8 @@ import type {
   SessionRenameRequest,
   SessionRenameValue,
   SessionSelectModelRequest,
+  SessionSetWorkingDirectoryRequest,
+  SessionSetWorkingDirectoryValue,
   SessionSelectModelValue,
   SessionUpdateQueueRequest,
   SessionUpdateQueueValue,
@@ -67,6 +71,27 @@ type PromptContentCandidate =
  */
 export function hasPromptContent(content: readonly PromptContentCandidate[]): boolean {
   return content.some(part => part.type !== 'text' || part.text.trim().length > 0)
+}
+
+/**
+ * Translate a working-directory refusal into the Session endpoint's stable
+ * failure, without depending on the provider's error class.
+ * @param error - rejection from the working-directory service.
+ * @param request - the move that failed, for the failure details.
+ * @returns the Remote failure to throw.
+ */
+function remoteWorkingDirectoryError(
+  error: unknown,
+  request: SessionSetWorkingDirectoryRequest,
+): RemoteError {
+  const code = (error as { code?: unknown } | null | undefined)?.code
+  const message = error instanceof Error ? error.message : String(error)
+  const failure = code === 'WORKING_DIRECTORY_NOT_FOUND'
+    ? 'session/working-directory-not-found'
+    : code === 'WORKING_DIRECTORY_INVALID'
+      ? 'session/working-directory-invalid'
+      : 'session/working-directory-unavailable'
+  return new RemoteError(failure, message, { sessionId: request.sessionId, path: request.path })
 }
 
 /**
@@ -245,6 +270,41 @@ export class SessionCommandController {
         {},
       )
     }
+  }
+
+  /**
+   * Move one Session's working directory to an existing directory. The move is
+   * the committed `workspace-root/change` the Host records for a checkout
+   * switch; the Session header keeps the original project. When the new
+   * directory is a Workspace root, the Session is filed under that Workspace
+   * and the projection checkpoint is refreshed so a restart reads the same
+   * directory a live Session reports.
+   * @param request - Session identity and the directory to move to.
+   * @param signal - cancellation before the durable change.
+   * @returns the canonical directory and the Workspace that accepted the Session.
+   */
+  async setWorkingDirectory(
+    request: SessionSetWorkingDirectoryRequest,
+    signal?: AbortSignal,
+  ): Promise<SessionSetWorkingDirectoryValue> {
+    const agent = await this.resolveAgent(request.sessionId)
+    const workingDirectory = this.ctx.get('workingDirectory')
+    if (workingDirectory === undefined) {
+      throw new RemoteError(
+        'gateway/internal',
+        'changing the working directory is unavailable: this deployment mounts no working-directory service',
+        {},
+      )
+    }
+    let cwd: string
+    try {
+      cwd = await workingDirectory.set(agent, request.path, signal)
+    } catch (error: unknown) {
+      throw remoteWorkingDirectoryError(error, request)
+    }
+    const workspaceId = await this.fileUnderOwningWorkspace(agent.session, cwd)
+    await this.refreshWorkingDirectoryCheckpoint(agent)
+    return { cwd, ...(workspaceId === undefined ? {} : { workspaceId }) }
   }
 
   /**
@@ -572,6 +632,49 @@ export class SessionCommandController {
     const found = await this.agents.resolveAgent(sessionId)
     if ('error' in found) throw found.error
     return found.agent
+  }
+
+  /**
+   * File one moved Session under the Workspace that owns its new directory.
+   * The Session may still carry the original project in its immutable header,
+   * so a Workspace that only matches on the header refuses the attach; the
+   * directory move already succeeded and membership follows the committed
+   * directory once it is read, so this is best effort.
+   * @param session - Session whose directory was just committed.
+   * @param cwd - canonical directory the Session now works in.
+   * @returns the Workspace id when the Session is (or became) one of its members.
+   */
+  private async fileUnderOwningWorkspace(session: Session, cwd: string): Promise<WorkspaceId | undefined> {
+    const workspace = this.ctx.workspaceRegistry.list().find(candidate => candidate.paths.includes(cwd))
+    if (workspace === undefined) return undefined
+    if (workspace.sessionIds.includes(session.id)) return workspace.id
+    try {
+      await workspace.attachSession(session.id)
+      return workspace.id
+    } catch (error: unknown) {
+      this.ctx.logger.warn(
+        `session-controller: session '${session.id}' moved to '${cwd}' but workspace '${workspace.id}' did not accept it: ${String(error)}`,
+      )
+      return undefined
+    }
+  }
+
+  /**
+   * Durably checkpoint the Session's projections now, so a restart reads the
+   * committed directory instead of the previous checkpoint. Failing to write
+   * only costs a longer tail replay, never correctness.
+   * @param agent - Agent owning the just-moved Session.
+   */
+  private async refreshWorkingDirectoryCheckpoint(agent: Agent): Promise<void> {
+    const cache = this.ctx.get('sessionProjectionCache')
+    if (cache === undefined) return
+    try {
+      await cache.write(agent.session)
+    } catch (error: unknown) {
+      this.ctx.logger.warn(
+        `session-controller: working-directory move for '${agent.id}' was not checkpointed: ${String(error)}`,
+      )
+    }
   }
 
   private rejectCreation(error: unknown): never {

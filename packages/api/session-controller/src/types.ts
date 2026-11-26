@@ -303,6 +303,26 @@ export interface SessionRenameValue {
   readonly seq: number
 }
 
+/** Move one Session's working directory to an existing directory. */
+export interface SessionSetWorkingDirectoryRequest {
+  readonly sessionId: SessionId
+  /** Absolute path, or a path relative to the Session's current directory. */
+  readonly path: string
+}
+
+/**
+ * The committed directory after a move, plus the Workspace that accepted the
+ * Session when the new directory names one of its roots. The Session header
+ * keeps the original project; every consumer reads the committed
+ * `workspace-root/change` instead.
+ */
+export interface SessionSetWorkingDirectoryValue {
+  /** Canonical absolute directory the Session works in from now on. */
+  readonly cwd: string
+  /** Workspace whose root owns the new directory, when one does. */
+  readonly workspaceId?: WorkspaceId
+}
+
 /** Session fork request. */
 export interface SessionForkRequest {
   readonly sessionId: SessionId
