@@ -44,6 +44,8 @@ interface HarnessOptions {
   liveSessions?: SessionHeader[]
   sessionStore?: boolean
   backend?: StorageBackend
+  /** Committed working directories by Session id, as a live projection or a durable checkpoint reports them. */
+  currentDirectories?: ReadonlyMap<string, string>
 }
 
 /** Boot the real storage/domain/registry composition over controllable header-only peers. */
@@ -62,6 +64,20 @@ async function harness(options: HarnessOptions = {}) {
   const open = vi.fn(() => { throw new Error('event bodies must not be opened') })
   const stat = vi.fn(() => { throw new Error('per-session stat must not be needed') })
   ctx.provide('sessionPersistence', { list, open, stat } as never)
+
+  if (options.currentDirectories !== undefined) {
+    const current = options.currentDirectories
+    ctx.provide('sessionProjections', {
+      stateOf: (session: { header: SessionHeader }, key: string) =>
+        key === 'workingDirectory' ? current.get(session.header.id) : undefined,
+    } as never)
+    ctx.provide('sessionProjectionCache', {
+      cachedSnapshot: (meta: SessionHeader, keys?: readonly string[]) =>
+        keys?.includes('workingDirectory') === true && current.has(meta.id)
+          ? { values: { workingDirectory: current.get(meta.id) } }
+          : undefined,
+    } as never)
+  }
 
   if (options.sessionStore === true) {
     await ctx.plugin(SessionStore)
@@ -1748,6 +1764,73 @@ describe('archive follow-up lifecycle', () => {
       await result.registry.archiveSession(brandString<SessionId>('cleanup-error'))
       expect(storedState(result.pool).archivedSessionIds).toEqual(['cleanup-error'])
       expect(warning).toHaveBeenCalled()
+    } finally { await result.ctx.fiber.dispose() }
+  })
+})
+
+describe('membership follows the committed working directory', () => {
+  it('keeps a moved Session in the Workspace that owns its committed directory', async () => {
+    const rootA = await makeDir('commit-moved-from')
+    const rootB = await makeDir('commit-moved-to')
+    const id = brandString<SessionId>('session-committed')
+    const result = await harness({
+      sessions: [header(id, rootA)],
+      currentDirectories: new Map([[id, rootB]]),
+    })
+    try {
+      const workspace = await result.registry.create(rootB, 'moved-to')
+      await workspace.attachSession(id)
+      expect(workspace.sessionIds).toEqual([id])
+    } finally { await result.ctx.fiber.dispose() }
+  })
+
+  it('accepts the committed directory when the immutable header no longer resolves', async () => {
+    const root = await makeDir('commit-live-root')
+    const removed = join(base, 'removed-root')
+    const id = brandString<SessionId>('session-gone-header')
+    const result = await harness({
+      sessions: [header(id, removed)],
+      currentDirectories: new Map([[id, root]]),
+    })
+    try {
+      const workspace = await result.registry.create(root, 'live')
+      await workspace.attachSession(id)
+      expect(workspace.sessionIds).toEqual([id])
+    } finally { await result.ctx.fiber.dispose() }
+  })
+
+  it('lets the Workspace owning the committed directory outrank the header one', async () => {
+    const rootA = await makeDir('commit-header-owner')
+    const rootB = await makeDir('commit-current-owner')
+    const id = brandString<SessionId>('session-outrank')
+    const result = await harness({
+      sessions: [header(id, rootA)],
+      currentDirectories: new Map([[id, rootB]]),
+    })
+    try {
+      const fromHeader = await result.registry.create(rootA, 'from-header')
+      const fromCurrent = await result.registry.create(rootB, 'from-current')
+      await fromHeader.attachSession(id)
+      expect(fromHeader.sessionIds).toEqual([])
+      await fromCurrent.attachSession(id)
+      expect(fromCurrent.sessionIds).toEqual([id])
+      const membership = new Map(result.registry.list().map(workspace => [workspace.id, workspace.sessionIds]))
+      expect(membership.get(fromHeader.id)).toEqual([])
+      expect(membership.get(fromCurrent.id)).toEqual([id])
+    } finally { await result.ctx.fiber.dispose() }
+  })
+
+  it('reads a live projection that no checkpoint has written yet', async () => {
+    const root = await makeDir('commit-live-projection')
+    const id = brandString<SessionId>('session-live-projection')
+    const result = await harness({
+      liveSessions: [header(id, join(base, 'live-old'))],
+      currentDirectories: new Map([[id, root]]),
+    })
+    try {
+      const workspace = await result.registry.create(root, 'live-projection')
+      await workspace.attachSession(id)
+      expect(workspace.sessionIds).toEqual([id])
     } finally { await result.ctx.fiber.dispose() }
   })
 })

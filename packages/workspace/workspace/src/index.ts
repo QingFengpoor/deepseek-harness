@@ -11,6 +11,7 @@ import { mkdir, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { WorkspaceEntity } from './entity.ts'
 import type { WorkspaceEntityHost } from './entity.ts'
@@ -244,6 +245,7 @@ export class WorkspaceRegistry extends Service {
   private readonly entities = new Map<WorkspaceId, WorkspaceEntity>()
   private readonly headers = new Map<SessionId, SessionHeader>()
   private readonly sessionPaths = new Map<SessionId, string>()
+  private readonly currentSessionPaths = new Map<SessionId, string>()
   private readonly missingSessionPaths = new Set<SessionId>()
   private readonly invalidSessionPaths = new Map<SessionId, string>()
   private operationTail: Promise<void> = Promise.resolve()
@@ -251,9 +253,20 @@ export class WorkspaceRegistry extends Service {
   private readonly host: WorkspaceEntityHost = {
     table: () => this.requireTable(),
     candidateMatches: (id, paths) => {
-      const path = this.sessionPaths.get(id)
-      return (path !== undefined && paths.includes(path)) || this.missingSessionPaths.has(id)
+      const current = this.currentPathOf(id)
+      if (current !== undefined && paths.includes(current)) return true
+      const headerPath = this.sessionPaths.get(id)
+      if (headerPath !== undefined && paths.includes(headerPath)) {
+        // A committed directory that names another Workspace's root outranks
+        // the immutable header: the Session moved, so only that owner keeps it.
+        const currentOwner = current === undefined ? undefined : this.findPathOwner(current)
+        const headerOwner = this.findPathOwner(headerPath)
+        return currentOwner === undefined || currentOwner === headerOwner
+      }
+      return this.missingSessionPaths.has(id)
     },
+    currentSessionPath: id => this.currentPathOf(id),
+    rememberSessionCurrentPath: (id, path) => { this.currentSessionPaths.set(id, path) },
     readSessionHeader: id => this.readSessionHeader(id),
     sessionHeader: (id) => {
       const header = this.headers.get(id)
@@ -476,6 +489,61 @@ export class WorkspaceRegistry extends Service {
       if (storedWorkspacePaths(record).includes(path)) return id
     }
     return undefined
+  }
+
+  /**
+   * The directory a Session works in now: its live projection when the
+   * Session is loaded, else the checkpoint indexed at startup, else nothing.
+   * The immutable header answers separately, so a Session keeps its Workspace
+   * membership through either directory.
+   * @param id - Session whose current directory is requested.
+   * @returns the committed directory, or undefined when no source names one.
+   */
+  private currentPathOf(id: SessionId): string | undefined {
+    const live = this.ctx.get('sessions')?.get(id)
+    if (live !== undefined) {
+      try {
+        // Structural view: the projection key set belongs to packages this one
+        // must not depend on, so only the synchronous read is relied on.
+        const projections = this.ctx.get('sessionProjections') as
+          { stateOf(session: typeof live, key: string): unknown } | undefined
+        const value = projections?.stateOf(live, 'workingDirectory')
+        if (typeof value === 'string' && value.length > 0) {
+          this.currentSessionPaths.set(id, value)
+          return value
+        }
+      } catch {
+        // A Session without that projection loaded falls back to its checkpoint.
+      }
+    }
+    return this.currentSessionPaths.get(id)
+  }
+
+  /**
+   * Record the directory the Session works in now, when a durable projection
+   * checkpoint already knows it. A moved Session belongs where its committed
+   * `workspace-root/change` points, not where its immutable header does; the
+   * cache may lag, so any failure leaves the header fallback in place.
+   * @param header - indexed Session header carrying the lifecycle identity.
+   */
+  private async indexCurrentPath(header: SessionHeader): Promise<void> {
+    // Structural read: the projection key set belongs to packages this one
+    // must not depend on (agent -> workspace -> agent), so only the
+    // synchronous checkpoint read is relied on.
+    const cache = this.ctx.get('sessionProjectionCache') as {
+      cachedSnapshot(
+        header: SessionHeader,
+        keys?: readonly string[],
+      ): { readonly values: Readonly<Record<string, unknown>> } | undefined
+    } | undefined
+    if (cache === undefined) return
+    try {
+      const value = cache.cachedSnapshot(header, ['workingDirectory'])?.values.workingDirectory
+      if (typeof value !== 'string' || value.length === 0) return
+      this.currentSessionPaths.set(header.id, await realpathNormalize(value))
+    } catch {
+      // No usable checkpoint or no resolvable directory: keep the header fallback.
+    }
   }
 
   /**
@@ -994,6 +1062,7 @@ export class WorkspaceRegistry extends Service {
   private async replaceHeaderIndex(headers: readonly SessionHeader[]): Promise<void> {
     this.headers.clear()
     this.sessionPaths.clear()
+    this.currentSessionPaths.clear()
     this.missingSessionPaths.clear()
     this.invalidSessionPaths.clear()
     await this.indexHeaders(headers)
@@ -1006,25 +1075,30 @@ export class WorkspaceRegistry extends Service {
   private async indexHeader(header: SessionHeader): Promise<void> {
     this.headers.set(header.id, header)
     this.sessionPaths.delete(header.id)
+    this.currentSessionPaths.delete(header.id)
     this.missingSessionPaths.delete(header.id)
-    if (header.cwd === undefined) {
-      this.invalidSessionPaths.set(header.id, 'header has no cwd')
-      return
-    }
     try {
-      const path = await realpathNormalize(header.cwd)
-      if (!(await stat(path)).isDirectory()) {
-        this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' is not a directory`)
+      if (header.cwd === undefined) {
+        this.invalidSessionPaths.set(header.id, 'header has no cwd')
         return
       }
-      this.sessionPaths.set(header.id, path)
-      this.invalidSessionPaths.delete(header.id)
-    } catch (error) {
-      if (fullyQualifiedWorkspacePath(header.cwd)
-        && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        this.missingSessionPaths.add(header.id)
+      try {
+        const path = await realpathNormalize(header.cwd)
+        if (!(await stat(path)).isDirectory()) {
+          this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' is not a directory`)
+          return
+        }
+        this.sessionPaths.set(header.id, path)
+        this.invalidSessionPaths.delete(header.id)
+      } catch (error) {
+        if (fullyQualifiedWorkspacePath(header.cwd)
+          && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+          this.missingSessionPaths.add(header.id)
+        }
+        this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' does not resolve`)
       }
-      this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' does not resolve`)
+    } finally {
+      await this.indexCurrentPath(header)
     }
   }
 

@@ -92,6 +92,22 @@ export interface WorkspaceEntityHost {
    * @param path - Canonical existing directory from the immutable header cwd.
    */
   rememberSessionPath(id: SessionId, path: string): void
+
+  /**
+   * The directory a Session works in now, when a live projection or a durable
+   * checkpoint names one. The immutable header answers membership separately,
+   * so a Session moved by a Host operation still belongs where it works.
+   * @param id - Session whose current directory is requested.
+   * @returns the committed canonical directory, or undefined.
+   */
+  currentSessionPath(id: SessionId): string | undefined
+
+  /**
+   * Publish a validated committed directory to the membership index.
+   * @param id - Validated session id.
+   * @param path - Canonical directory the Session now works in.
+   */
+  rememberSessionCurrentPath(id: SessionId, path: string): void
 }
 
 /** Chain-slot abort sentinel thrown by the update fn when the record needs no change; only `mutate` observes it. */
@@ -153,36 +169,43 @@ export class WorkspaceEntity implements Workspace {
     // (stored header cwd, workspace path) are immutable. Membership itself is
     // decided on the write chain inside `mutate`, never on this snapshot.
     if (!this.record.sessionIds.includes(sessionId)) {
-      const header = await this.host.readSessionHeader(sessionId)
-      if (header.cwd === undefined) {
-        throw new Error(
-          `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + 'its stored header carries no cwd to validate against',
-        )
+      const current = this.host.currentSessionPath(sessionId)
+      if (current !== undefined && this.paths.includes(current)) {
+        // The committed directory is one of our roots; the immutable header may
+        // name a directory that no longer exists (a moved or removed root).
+        this.host.rememberSessionCurrentPath(sessionId, current)
+      } else {
+        const header = await this.host.readSessionHeader(sessionId)
+        if (header.cwd === undefined) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + 'its stored header carries no cwd to validate against',
+          )
+        }
+        let cwd: string
+        try {
+          cwd = await realpathNormalize(header.cwd)
+        } catch (error) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its cwd '${header.cwd}' does not resolve, so it cannot be validated`,
+            { cause: error },
+          )
+        }
+        if (!(await stat(cwd)).isDirectory()) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its cwd '${header.cwd}' is not a directory`,
+          )
+        }
+        if (!this.paths.includes(cwd)) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its cwd resolves to '${cwd}', which is not one of this workspace's roots`,
+          )
+        }
+        this.host.rememberSessionPath(sessionId, cwd)
       }
-      let cwd: string
-      try {
-        cwd = await realpathNormalize(header.cwd)
-      } catch (error) {
-        throw new Error(
-          `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + `its cwd '${header.cwd}' does not resolve, so it cannot be validated`,
-          { cause: error },
-        )
-      }
-      if (!(await stat(cwd)).isDirectory()) {
-        throw new Error(
-          `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + `its cwd '${header.cwd}' is not a directory`,
-        )
-      }
-      if (!this.paths.includes(cwd)) {
-        throw new Error(
-          `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + `its cwd resolves to '${cwd}', which is not one of this workspace's roots`,
-        )
-      }
-      this.host.rememberSessionPath(sessionId, cwd)
     }
     await this.mutate(record => record.sessionIds.includes(sessionId)
       ? record
