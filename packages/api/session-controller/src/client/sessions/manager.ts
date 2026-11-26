@@ -9,6 +9,7 @@ import type {
   SessionControlFrame,
   SessionProjectionHints,
   SessionRenameValue,
+  SessionSetWorkingDirectoryValue,
   SessionSummary,
 } from '../../types.ts'
 import { mergeOrderedBaseline } from '../ordered-baseline.ts'
@@ -574,6 +575,22 @@ export class SessionManager {
       this.projectionStore(sessionId).apply('title', result.value.title, SessionSeq(result.value.seq))
     }
     return result
+  }
+
+  /**
+   * Move a Session's working directory to an existing directory. The Host
+   * commits a `workspace-root/change`, re-files the Session under the
+   * Workspace that owns the new root, and streams the new projection; this
+   * call only reports the committed directory.
+   * @param sessionId - Session to move.
+   * @param path - existing directory, absolute or relative to the current one.
+   * @returns the committed directory and its Workspace, or the Remote failure.
+   */
+  async setWorkingDirectory(
+    sessionId: SessionId,
+    path: string,
+  ): Promise<RemoteResult<SessionSetWorkingDirectoryValue>> {
+    return await this.remote.session.setWorkingDirectory({ sessionId, path })
   }
 
   /**

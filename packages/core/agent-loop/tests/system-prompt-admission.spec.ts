@@ -684,3 +684,27 @@ describe('prepared-route prompt admission', () => {
     expect(h.agent.session.snapshotEvents().filter(event => event.type === 'user/message')).toHaveLength(2)
   })
 })
+
+describe('turn failure codes', () => {
+  it('surfaces a working-directory refusal instead of UNKNOWN', async () => {
+    const h = await harness()
+    h.ctx.on('system-prompt/assemble', () => {
+      throw Object.assign(new Error('working-directory: directory does not exist: "/gone"'), {
+        code: 'WORKING_DIRECTORY_UNAVAILABLE',
+      })
+    })
+    await send(h.agent, 'hello')
+    const end = h.agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')
+    expect(end?.data).toMatchObject({
+      reason: { kind: 'error', error: { code: 'WORKING_DIRECTORY_UNAVAILABLE' } },
+    })
+  })
+
+  it('keeps UNKNOWN for an error without a surfaced code', async () => {
+    const h = await harness()
+    h.ctx.on('system-prompt/assemble', () => { throw new Error('plain failure') })
+    await send(h.agent, 'hello')
+    const end = h.agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')
+    expect(end?.data).toMatchObject({ reason: { kind: 'error', error: { code: 'UNKNOWN' } } })
+  })
+})

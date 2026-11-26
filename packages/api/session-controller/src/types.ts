@@ -197,6 +197,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'session/queue-item-not-found': { readonly itemId: MessageId }
     'session/steer-unavailable': { readonly itemId: MessageId }
     'session/title-invalid': { readonly sessionId: SessionId }
+    /** The requested working directory is empty or not absolute. */
+    'session/working-directory-invalid': { readonly sessionId: SessionId; readonly path: string }
+    /** The requested working directory does not exist or is not a directory. */
+    'session/working-directory-not-found': { readonly sessionId: SessionId; readonly path: string }
+    /** Neither the current nor the original directory can be used. */
+    'session/working-directory-unavailable': { readonly sessionId: SessionId; readonly path: string }
     'session/fork-unavailable': { readonly sessionId: SessionId }
     'session/migration-required': { readonly sessionId: SessionId }
     'subagent/not-found': {

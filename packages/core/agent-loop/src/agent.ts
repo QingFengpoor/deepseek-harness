@@ -90,6 +90,31 @@ function requestProposal(header: EpochHeader): LlmCallConfig {
  * @param signal - a turn or maintenance signal this loop owns.
  * @returns the copied cause, or undefined while the signal is still live.
  */
+/**
+ * Failure codes a non-LLM, non-tool error may surface verbatim. The working
+ * directory service refuses a turn before the model call when the Session's
+ * directory disappeared; the client needs that fact to offer a repair instead
+ * of an opaque `UNKNOWN`.
+ */
+const SURFACED_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'WORKING_DIRECTORY_UNAVAILABLE',
+  'WORKING_DIRECTORY_NOT_FOUND',
+  'WORKING_DIRECTORY_INVALID',
+])
+
+/**
+ * The stable code one turn failure reports: an LLM failure keeps its own code,
+ * a tool activation failure keeps its code, and a working-directory refusal
+ * keeps its documented code. Anything else flattens to `UNKNOWN`.
+ * @param error - rejection that ended the turn.
+ * @returns the code stored on the `turn/end` failure.
+ */
+function turnFailureCode(error: unknown): string {
+  if (error instanceof ToolActivationError) return error.code
+  const code = (error as { code?: unknown } | null | undefined)?.code
+  return typeof code === 'string' && SURFACED_FAILURE_CODES.has(code) ? code : 'UNKNOWN'
+}
+
 function abortedCancelCause(signal: AbortSignal): AgentCancelCause | undefined {
   if (!signal.aborted) return undefined
   // `cancel()` is the only aborter of the signals this loop owns.
@@ -409,7 +434,7 @@ export class ReactLoopAgent implements Agent {
         kind: 'error',
         error: error instanceof LlmError
           ? error.failure
-          : { message: errorChain(error), code: error instanceof ToolActivationError ? error.code : 'UNKNOWN' },
+          : { message: errorChain(error), code: turnFailureCode(error) },
       }
       this.throwError(error)
     } finally {
