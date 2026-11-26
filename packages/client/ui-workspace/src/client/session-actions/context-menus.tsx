@@ -12,6 +12,7 @@ import type {
 
 type Actions = Omit<PinSessionInjected & ArchiveSessionInjected, 'hooks'>
   & ForkSessionInjected & RenameSessionInjected & SessionIdInjected
+  & { changeWorkingDirectory: (sessionId: SessionId) => void }
   & { readonly markSession: (sessionId: SessionId, unread: boolean) => void }
 
 /**
@@ -65,6 +66,10 @@ export function registerSessionMenus(ctx: Context, actions: Actions): void {
       run: () => { actions.markSession(target.sessionId, !unread) },
     }]
   }, [ctx.uiSession.sessionStatus, ctx.uiSession.sessionStatus.readingReady])
+  register('directory', 350, ['session/setWorkingDirectory'], target => allowed(target, 'session/setWorkingDirectory') ? [{
+    id: 'directory', label: t('menu.changeWorkingDirectory'), icon: { key: 'workspace.roots' },
+    run: () => { actions.changeWorkingDirectory(target.sessionId) },
+  }] : [])
   register('fork', 300, ['session/fork'], target => allowed(target, 'session/fork') ? [{
     id: 'fork', label: t('menu.fork'), icon: { key: 'workspace.fork' }, commandId: 'session.fork' as ShortcutCommandId,
     run: () => { actions.forkSession(target.sessionId) },

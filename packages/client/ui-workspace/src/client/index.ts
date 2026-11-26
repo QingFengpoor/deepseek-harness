@@ -293,6 +293,16 @@ export function apply(ctx: Context, config: SyncedConfig<WorkspaceNavigationConf
       })
     },
   })
+  const changeWorkingDirectory = async (sessionId: SessionId): Promise<void> => {
+    const picked = await ctx.remote.directoryPicker.pick()
+    if (!picked.ok) {
+      notify({ kind: 'directoryMoveFailed', message: picked.error.message })
+      return
+    }
+    if (picked.value === null) return
+    const moved = await ctx.remote.session.setWorkingDirectory({ sessionId, path: picked.value })
+    if (!moved.ok) notify({ kind: 'directoryMoveFailed', message: moved.error.message })
+  }
   const sessionIdInjected = (): SessionIdInjected => ({
     copySessionId: async (sessionId) => {
       const copied = await writeClipboard(sessionId)
@@ -423,7 +433,7 @@ export function apply(ctx: Context, config: SyncedConfig<WorkspaceNavigationConf
   }, SessionMenu))
   registerSessionMenus(ctx, {
     ...pinInjected(), ...archiveInjected(), ...renameInjected(), ...forkInjected(), ...sessionIdInjected(),
-    markSession,
+    markSession, changeWorkingDirectory,
   })
   ctx.slots.inject('sidebar.workspaces.session.row.action', function* () {
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'archive', order: 100, locale: NS, inject: archiveInjected }, ArchiveSessionRowButton)
