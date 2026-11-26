@@ -382,6 +382,27 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('rename') rename(request: WorkspaceRenameRequest): Promise<WorkspaceValue>
 
 /**
+ * Append one existing directory as another root of a Workspace.
+ * @param request - Workspace identity and directory path.
+ * @returns the updated Workspace projection.
+ */
+@Remote('addPath') addPath(request: WorkspaceAddPathRequest): Promise<WorkspaceValue>
+
+/**
+ * Remove one root from a Workspace.
+ * @param request - Workspace identity and owned root path.
+ * @returns the updated Workspace projection.
+ */
+@Remote('removePath') removePath(request: WorkspaceRemovePathRequest): Promise<WorkspaceValue>
+
+/**
+ * Promote one owned root to the Workspace's primary root.
+ * @param request - Workspace identity and owned root path.
+ * @returns the updated Workspace projection.
+ */
+@Remote('setPrimaryPath') setPrimaryPath(request: WorkspaceSetPrimaryPathRequest): Promise<WorkspaceValue>
+
+/**
  * Remove one Workspace registration while retaining files and Sessions.
  * @param request - Workspace identity to remove.
  * @returns deletion confirmation.
@@ -540,17 +561,22 @@ Durable workspace registry. Startup waits for `sessionPersistence`, builds one c
 
 ```ts cordis-catalog
 /**
- * Create or reuse a workspace for an existing directory. The fully qualified
- * path is canonicalized through `fs.realpath`; a relative, nonexistent, or
- * non-directory path rejects. Repeated calls for the same canonical path
- * return the existing entity without changing its title.
- * A newly created workspace is prepended to the durable registry order.
- * Different canonical paths may share a display title.
- * @param path - Existing directory to own, in a fully qualified path spelling.
- * @param title - Display title used only when a new record is created.
+ * Create or reuse a workspace over one or more existing directories. Every
+ * fully qualified path is canonicalized through `fs.realpath`; relative,
+ * nonexistent, or non-directory paths reject. Duplicate canonical paths
+ * collapse; the first input becomes the primary root.
+ *
+ * Repeated calls for the same root set return the existing entity without
+ * changing its title. A root already owned by a different Workspace rejects
+ * with {@link WorkspacePathConflictError}; a partial overlap with one
+ * Workspace also rejects rather than silently merging. A newly created
+ * workspace is prepended to the durable registry order. Different canonical
+ * paths may share a display title.
+ * @param path - existing directory, or a non-empty list of them, in fully qualified spellings.
+ * @param title - display title used only when a new record is created.
  * @returns the existing or newly durable workspace.
  */
-async create(path: string, title?: string): Promise<Workspace>
+async create(path: string | readonly string[], title?: string): Promise<Workspace>
 
 /**
  * Initialize the default Workspace only while both the registry and Session
@@ -599,6 +625,34 @@ delete(id: WorkspaceId): Promise<boolean>
  * @returns the complete committed workspace order.
  */
 insertBefore(id: WorkspaceId, beforeId?: WorkspaceId): Promise<readonly WorkspaceId[]>
+
+/**
+ * Append one existing directory as another root of a Workspace. The path is
+ * canonicalized like `create`; a root on the same Workspace is a duplicate,
+ * and a root owned by another Workspace is a conflict.
+ * @param id - target Workspace.
+ * @param path - existing directory in a fully qualified spelling.
+ * @returns the updated Workspace.
+ */
+addPath(id: WorkspaceId, path: string): Promise<Workspace>
+
+/**
+ * Remove one root from a Workspace. The last root is refused; removing the
+ * primary promotes the next root. Sessions whose cwd was that root are
+ * detached from the account in the same durable write (their logs remain).
+ * @param id - target Workspace.
+ * @param path - owned root, canonical or an existing alias of it.
+ * @returns the updated Workspace.
+ */
+removePath(id: WorkspaceId, path: string): Promise<Workspace>
+
+/**
+ * Promote one owned root to primary by moving it first; `path` follows.
+ * @param id - target Workspace.
+ * @param path - owned root, canonical or an existing alias of it.
+ * @returns the updated Workspace.
+ */
+setPrimaryPath(id: WorkspaceId, path: string): Promise<Workspace>
 
 /**
  * Archive one session durably. The session must exist (live or in session

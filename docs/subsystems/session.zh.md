@@ -979,6 +979,15 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('rename') rename(request: SessionRenameRequest): Promise<SessionRenameValue>
 
 /**
+ * Move one Session's working directory to an existing directory and file it
+ * under the Workspace that owns the new root.
+ * @param request - Session identity and the directory to move to.
+ * @param signal - cancellation before the durable change.
+ * @returns the committed directory and the Workspace that accepted the Session.
+ */
+@Remote('setWorkingDirectory') setWorkingDirectory( request: SessionSetWorkingDirectoryRequest, signal: AbortSignal, ): Promise<SessionSetWorkingDirectoryValue>
+
+/**
  * Fork one cold-readable exact event prefix into a new Session. An omitted
  * boundary selects the latest completed-turn prefix; an open cut receives
  * synthetic fork closers.

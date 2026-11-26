@@ -3284,6 +3284,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when the directory is relative or contains a NUL byte.'],
       },
       {
+        signature: 'rootsOf(session: Session): string[]',
+        description: 'Every writable root for one session: its cwd plus every root of the Workspace that owns it (the registry\'s current record, so adding or removing a root takes effect on the next call). The cwd is always included — a session may outlive its workspace membership. Without a mounted registry the cwd stands alone, which is the single-root behaviour.',
+        parameters: [{ name: 'session', description: 'session whose roots are resolved.' }],
+        returns: 'the deduplicated absolute roots, primary cwd first.',
+      },
+      {
         signature: 'overrideOf(session: Session): SandboxMode | undefined',
         description: 'Read the session override without applying the deployment default.',
         parameters: [{ name: 'session', description: 'session whose log supplies the override.' }],
@@ -3454,6 +3460,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Rename one Session after explicitly resuming it.',
         parameters: [{ name: 'request', description: 'Session identity and proposed title.' }],
         returns: 'the accepted title and durable event sequence.',
+      },
+      {
+        signature: '@Remote(\'setWorkingDirectory\') setWorkingDirectory( request: SessionSetWorkingDirectoryRequest, signal: AbortSignal, ): Promise<SessionSetWorkingDirectoryValue>',
+        description: 'Move one Session\'s working directory to an existing directory and file it under the Workspace that owns the new root.',
+        parameters: [{ name: 'request', description: 'Session identity and the directory to move to.' }, { name: 'signal', description: 'cancellation before the durable change.' }],
+        returns: 'the committed directory and the Workspace that accepted the Session.',
       },
       {
         signature: '@Remote(\'fork\') async fork(request: SessionForkRequest): Promise<SessionForkValue>',
@@ -5308,6 +5320,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the updated Workspace projection.',
       },
       {
+        signature: '@Remote(\'addPath\') addPath(request: WorkspaceAddPathRequest): Promise<WorkspaceValue>',
+        description: 'Append one existing directory as another root of a Workspace.',
+        parameters: [{ name: 'request', description: 'Workspace identity and directory path.' }],
+        returns: 'the updated Workspace projection.',
+      },
+      {
+        signature: '@Remote(\'removePath\') removePath(request: WorkspaceRemovePathRequest): Promise<WorkspaceValue>',
+        description: 'Remove one root from a Workspace.',
+        parameters: [{ name: 'request', description: 'Workspace identity and owned root path.' }],
+        returns: 'the updated Workspace projection.',
+      },
+      {
+        signature: '@Remote(\'setPrimaryPath\') setPrimaryPath(request: WorkspaceSetPrimaryPathRequest): Promise<WorkspaceValue>',
+        description: 'Promote one owned root to the Workspace\'s primary root.',
+        parameters: [{ name: 'request', description: 'Workspace identity and owned root path.' }],
+        returns: 'the updated Workspace projection.',
+      },
+      {
         signature: '@Remote(\'delete\') delete(request: WorkspaceDeleteRequest): Promise<WorkspaceDeleteValue>',
         description: 'Remove one Workspace registration while retaining files and Sessions.',
         parameters: [{ name: 'request', description: 'Workspace identity to remove.' }],
@@ -5414,9 +5444,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Durable workspace registry. Startup waits for `sessionPersistence`, builds one canonical-cwd header index, and completes the one-time history bootstrap before the service becomes active. The persistence dependency is mandatory so an unavailable peer can never be mistaken for an empty history and commit the initialized marker.',
     methods: [
       {
-        signature: 'async create(path: string, title?: string): Promise<Workspace>',
-        description: 'Create or reuse a workspace for an existing directory. The fully qualified path is canonicalized through `fs.realpath`; a relative, nonexistent, or non-directory path rejects. Repeated calls for the same canonical path return the existing entity without changing its title. A newly created workspace is prepended to the durable registry order. Different canonical paths may share a display title.',
-        parameters: [{ name: 'path', description: 'Existing directory to own, in a fully qualified path spelling.' }, { name: 'title', description: 'Display title used only when a new record is created.' }],
+        signature: 'async create(path: string | readonly string[], title?: string): Promise<Workspace>',
+        description: 'Create or reuse a workspace over one or more existing directories. Every fully qualified path is canonicalized through `fs.realpath`; relative, nonexistent, or non-directory paths reject. Duplicate canonical paths collapse; the first input becomes the primary root.\n\nRepeated calls for the same root set return the existing entity without changing its title. A root already owned by a different Workspace rejects with WorkspacePathConflictError; a partial overlap with one Workspace also rejects rather than silently merging. A newly created workspace is prepended to the durable registry order. Different canonical paths may share a display title.',
+        parameters: [{ name: 'path', description: 'existing directory, or a non-empty list of them, in fully qualified spellings.' }, { name: 'title', description: 'display title used only when a new record is created.' }],
         returns: 'the existing or newly durable workspace.',
       },
       {
@@ -5448,6 +5478,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Move one workspace within the durable display order, DOM-insertBefore-like. With an anchor it lands before that workspace; without one it appends.',
         parameters: [{ name: 'id', description: 'Workspace to move.' }, { name: 'beforeId', description: 'Workspace anchor; omitted appends.' }],
         returns: 'the complete committed workspace order.',
+      },
+      {
+        signature: 'addPath(id: WorkspaceId, path: string): Promise<Workspace>',
+        description: 'Append one existing directory as another root of a Workspace. The path is canonicalized like `create`; a root on the same Workspace is a duplicate, and a root owned by another Workspace is a conflict.',
+        parameters: [{ name: 'id', description: 'target Workspace.' }, { name: 'path', description: 'existing directory in a fully qualified spelling.' }],
+        returns: 'the updated Workspace.',
+      },
+      {
+        signature: 'removePath(id: WorkspaceId, path: string): Promise<Workspace>',
+        description: 'Remove one root from a Workspace. The last root is refused; removing the primary promotes the next root. Sessions whose cwd was that root are detached from the account in the same durable write (their logs remain).',
+        parameters: [{ name: 'id', description: 'target Workspace.' }, { name: 'path', description: 'owned root, canonical or an existing alias of it.' }],
+        returns: 'the updated Workspace.',
+      },
+      {
+        signature: 'setPrimaryPath(id: WorkspaceId, path: string): Promise<Workspace>',
+        description: 'Promote one owned root to primary by moving it first; `path` follows.',
+        parameters: [{ name: 'id', description: 'target Workspace.' }, { name: 'path', description: 'owned root, canonical or an existing alias of it.' }],
+        returns: 'the updated Workspace.',
       },
       {
         signature: 'archiveSession(sessionId: SessionId, options: ArchiveSessionOptions = {}): Promise<void>',
@@ -9596,7 +9644,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SandboxExecutionPolicy',
-    declaration: 'export interface SandboxExecutionPolicy {\n    mode: SandboxMode;\n    workspaceRoot: string;\n    additionalWritableRoots?: readonly string[];\n    sessionId?: SessionId;\n}',
+    declaration: 'export interface SandboxExecutionPolicy {\n    mode: SandboxMode;\n    workspaceRoot: string;\n    additionalWritableRoots?: readonly string[];\n    workspaceRoots?: readonly string[];\n    sessionId?: SessionId;\n}',
   },
   {
     name: 'SandboxMode',
@@ -9860,7 +9908,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionCreateRequest',
-    declaration: 'export interface SessionCreateRequest {\n    readonly workspaceId?: WorkspaceId;\n    readonly cwd?: string;\n    readonly sessionId?: SessionId;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface SessionCreateRequest {\n    readonly workspaceId?: WorkspaceId;\n    readonly rootPath?: string;\n    readonly cwd?: string;\n    readonly sessionId?: SessionId;\n    readonly agentPreset?: string;\n}',
   },
   {
     name: 'SessionCreateValue',
@@ -10317,6 +10365,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionSeqCursor',
     declaration: 'export type SessionSeqCursor = SessionSeq | -1;',
+  },
+  {
+    name: 'SessionSetWorkingDirectoryRequest',
+    declaration: 'export interface SessionSetWorkingDirectoryRequest {\n    readonly sessionId: SessionId;\n    readonly path: string;\n}',
+  },
+  {
+    name: 'SessionSetWorkingDirectoryValue',
+    declaration: 'export interface SessionSetWorkingDirectoryValue {\n    readonly cwd: string;\n    readonly workspaceId?: WorkspaceId;\n}',
   },
   {
     name: 'SessionStartInput',
@@ -11808,7 +11864,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Workspace',
-    declaration: 'export interface Workspace {\n    readonly id: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly createdAt: string;\n    readonly updatedAt: string;\n    readonly sessionIds: readonly SessionId[];\n    getSessionHeaders(): readonly SessionHeader[];\n    setTitle(title: string): Promise<void>;\n    attachSession(sessionId: SessionId): Promise<void>;\n    insertSessionBefore(sessionId: SessionId, beforeSessionId?: SessionId): Promise<void>;\n    detachSession(sessionId: SessionId): Promise<void>;\n    status(): Promise<\'ok\' | \'missing-dir\'>;\n}',
+    declaration: 'export interface Workspace {\n    readonly id: WorkspaceId;\n    readonly path: string;\n    readonly paths: readonly string[];\n    readonly title: string;\n    readonly createdAt: string;\n    readonly updatedAt: string;\n    readonly sessionIds: readonly SessionId[];\n    getSessionHeaders(): readonly SessionHeader[];\n    setTitle(title: string): Promise<void>;\n    attachSession(sessionId: SessionId): Promise<void>;\n    insertSessionBefore(sessionId: SessionId, beforeSessionId?: SessionId): Promise<void>;\n    detachSession(sessionId: SessionId): Promise<void>;\n    status(): Promise<\'ok\' | \'missing-dir\'>;\n}',
+  },
+  {
+    name: 'WorkspaceAddPathRequest',
+    declaration: 'export interface WorkspaceAddPathRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n}',
   },
   {
     name: 'WorkspaceArchiveSessionRequest',
@@ -11840,7 +11900,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceCreateRequest',
-    declaration: 'export interface WorkspaceCreateRequest {\n    readonly path: string;\n}',
+    declaration: 'export interface WorkspaceCreateRequest {\n    readonly path?: string;\n    readonly paths?: readonly string[];\n    readonly title?: string;\n}',
   },
   {
     name: 'WorkspaceCreateValue',
@@ -11939,8 +11999,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface WorkspacePinValue {\n    readonly pinnedSessionIds: readonly SessionId[];\n}',
   },
   {
+    name: 'WorkspaceRemovePathRequest',
+    declaration: 'export interface WorkspaceRemovePathRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n}',
+  },
+  {
     name: 'WorkspaceRenameRequest',
     declaration: 'export interface WorkspaceRenameRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly title: string;\n}',
+  },
+  {
+    name: 'WorkspaceSetPrimaryPathRequest',
+    declaration: 'export interface WorkspaceSetPrimaryPathRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n}',
   },
   {
     name: 'WorkspaceUnarchiveSessionRequest',
@@ -11956,7 +12024,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceView',
-    declaration: 'export interface WorkspaceView {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly sessionIds: readonly SessionId[];\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
+    declaration: 'export interface WorkspaceView {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n    readonly paths: readonly string[];\n    readonly title: string;\n    readonly sessionIds: readonly SessionId[];\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
   },
   {
     name: 'WorktreeCleanup',

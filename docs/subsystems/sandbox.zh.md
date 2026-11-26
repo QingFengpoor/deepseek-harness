@@ -235,6 +235,17 @@ resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy
 registerWritableRoot(session: Session, directory: string): () => void
 
 /**
+ * Every writable root for one session: its cwd plus every root of the
+ * Workspace that owns it (the registry's current record, so adding or
+ * removing a root takes effect on the next call). The cwd is always
+ * included — a session may outlive its workspace membership. Without a
+ * mounted registry the cwd stands alone, which is the single-root behaviour.
+ * @param session - session whose roots are resolved.
+ * @returns the deduplicated absolute roots, primary cwd first.
+ */
+rootsOf(session: Session): string[]
+
+/**
  * Read the session override without applying the deployment default.
  * @param session - session whose log supplies the override.
  * @returns the last logged mode, or `undefined` without one.
